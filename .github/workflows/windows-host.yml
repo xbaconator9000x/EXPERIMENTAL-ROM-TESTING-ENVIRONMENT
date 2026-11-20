@@ -8,6 +8,7 @@ on:
       - 'core/state_runner.c'
       - 'core/live_runner.c'
       - 'core/run_locked.py'
+      - 'tests/**'
       - '.github/workflows/windows-host.yml'
 permissions:
   contents: read
