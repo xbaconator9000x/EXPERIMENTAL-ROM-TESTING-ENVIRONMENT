@@ -2,7 +2,8 @@
 import hashlib
 import os
 from pathlib import Path
-import select
+import queue
+import threading
 import subprocess
 import tempfile
 import time
@@ -12,42 +13,57 @@ class LiveError(RuntimeError):
 
 class Live:
     def __init__(self, runner, rom, sha256):
-        data = Path(rom).read_bytes()
+        rom=Path(rom)
+        if not 0<rom.stat().st_size<=32*1024*1024:
+            raise LiveError("Invalid ROM size")
+        data = rom.read_bytes()
         self.sha256 = hashlib.sha256(data).hexdigest()
         if self.sha256 != sha256.lower():
             raise LiveError("ROM SHA-256 mismatch")
         self.tmp = tempfile.TemporaryDirectory(prefix="gba-live-")
         self.proc = None
-        self.buffer = b""
+        self.responses=queue.Queue()
+        self.reader=None
         try:
             path = Path(self.tmp.name) / "game.gba"
             path.write_bytes(data)
+            env=os.environ.copy()
+            if os.name=="nt":
+                env["PATH"]=env.get("MSYS2_UCRT64_BIN",r"C:\msys64\ucrt64\bin")+os.pathsep+env.get("PATH","")
             self.proc = subprocess.Popen(
-                [str(Path(runner).resolve()), str(path)],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0)
+                [str(Path(runner).resolve()), str(path)], cwd=self.tmp.name, env=env,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=-1,
+                creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+            self.reader=threading.Thread(target=self._read_loop,daemon=True)
+            self.reader.start()
             if self._line() != "READY":
                 raise LiveError("emulator initialization failed")
         except BaseException:
             self.close()
             raise
 
+    def _read_loop(self):
+        # select() cannot wait on anonymous subprocess pipes on Windows.
+        try:
+            while True:
+                line=self.proc.stdout.readline(240*160*6+12)
+                if not line:
+                    self.responses.put(LiveError("emulator exited"));return
+                if len(line)>240*160*6+10 or not line.endswith(b"\n"):
+                    self.responses.put(LiveError("oversized emulator response"));return
+                self.responses.put(line[:-1].rstrip(b"\r").decode("ascii"))
+        except (OSError,UnicodeError,ValueError):
+            self.responses.put(LiveError("emulator transport failed"))
+
     def _line(self):
-        end = time.monotonic() + 15
-        while b"\n" not in self.buffer:
-            remain = end - time.monotonic()
-            if remain <= 0 or not select.select([self.proc.stdout], [], [], remain)[0]:
-                raise LiveError("emulator response timed out")
-            chunk = os.read(self.proc.stdout.fileno(), 65536)
-            if not chunk:
-                raise LiveError("emulator exited")
-            self.buffer += chunk
-            if len(self.buffer) > 240*160*6+10:
-                raise LiveError("oversized emulator response")
-        line, self.buffer = self.buffer.split(b"\n", 1)
-        return line.decode("ascii")
+        try:result=self.responses.get(timeout=15)
+        except queue.Empty:raise LiveError("emulator response timed out") from None
+        if isinstance(result,Exception):raise result
+        return result
 
     def _request(self, cmd):
         self.proc.stdin.write((cmd + "\n").encode("ascii"))
+        self.proc.stdin.flush()
         result = self._line()
         if result.startswith("ERR "):
             raise LiveError(result)
@@ -72,12 +88,28 @@ class Live:
             raise LiveError("invalid frame response")
         return int(result[3:])
 
-    def screenshot(self, path):
-        result = self._request("FRAME")
-        if not result.startswith("RGB ") or len(result) != 4+240*160*6:
+    def rgb(self):
+        result=self._request("FRAME")
+        if not result.startswith("RGB ") or len(result)!=4+240*160*6:
             raise LiveError("invalid screenshot response")
-        with open(path, "xb") as file:
-            file.write(b"P6\n240 160\n255\n"+bytes.fromhex(result[4:]))
+        return bytes.fromhex(result[4:])
+
+    def screenshot(self,path):
+        with open(path,"xb") as file:
+            file.write(b"P6\n240 160\n255\n"+self.rgb())
+
+    def save_state(self):
+        target=Path(self.tmp.name)/"checkpoint.bin"
+        target.unlink(missing_ok=True)
+        if self._request("SAVE")!="OK state" or not 0<target.stat().st_size<=2*1024*1024:
+            raise LiveError("invalid native checkpoint")
+        return target.read_bytes()
+
+    def load_state(self,data):
+        if not isinstance(data,bytes) or not 0<len(data)<=2*1024*1024:
+            raise LiveError("invalid native checkpoint size")
+        (Path(self.tmp.name)/"checkpoint.bin").write_bytes(data)
+        if self._request("LOAD")!="OK state":raise LiveError("checkpoint rejected")
 
     def close(self):
         if self.proc is not None:
@@ -85,6 +117,7 @@ class Live:
                 self.proc.kill()
             self.proc.wait(timeout=5)
             self.proc.stdin.close()
+            if self.reader is not None:self.reader.join(timeout=2)
             self.proc.stdout.close()
         self.tmp.cleanup()
 

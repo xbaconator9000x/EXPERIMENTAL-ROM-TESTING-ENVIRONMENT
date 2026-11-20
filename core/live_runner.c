@@ -16,6 +16,25 @@ static struct mLogger logger={.log=silent};
 static int range(unsigned a,unsigned n,unsigned lo,unsigned hi){
     return n && a>=lo && a<hi && n<=hi-a;
 }
+/* Fixed private path in the per-process working directory. No path argument. */
+static int state_io(struct mCore *c,int save){
+    const char *path="checkpoint.bin";
+    size_t n=c->stateSize(c);
+    if(!n||n>2u*1024u*1024u)return 0;
+    void *buf=malloc(n);if(!buf)return 0;
+    int ok=0;FILE *f=NULL;
+    if(save){
+        if(c->saveState(c,buf)&&(f=fopen(path,"wb"))!=NULL){
+            ok=fwrite(buf,1,n,f)==n;
+            if(fclose(f))ok=0;
+        }
+    }else if((f=fopen(path,"rb"))!=NULL){
+        ok=fread(buf,1,n,f)==n&&fgetc(f)==EOF&&!ferror(f);
+        if(fclose(f))ok=0;
+        if(ok)ok=c->loadState(c,buf);
+    }
+    free(buf);return ok;
+}
 int main(int argc,char **argv){
     if(argc!=2)return 2;
     FILE *rom=fopen(argv[1],"rb");
@@ -42,6 +61,10 @@ int main(int argc,char **argv){
         unsigned a,n;
         if(crashed){puts("ERR crash");fflush(stdout);break;}
         if(!strcmp(line,"QUIT\n"))break;
+        if(!strcmp(line,"SAVE\n")||!strcmp(line,"LOAD\n")){
+            c->setKeys(c,0);
+            puts(state_io(c,line[0]=='S')?"OK state":"ERR state");fflush(stdout);continue;
+        }
         if(sscanf(line,"READ %x %u %c",&a,&n,&extra)==2){
             if(n>32768||!(range(a,n,0x02000000,0x02040000)||
                 range(a,n,0x03000000,0x03008000)||
