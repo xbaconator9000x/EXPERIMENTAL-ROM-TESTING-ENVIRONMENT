@@ -1,26 +1,28 @@
-# Broader native compatibility
+# Exact revision compatibility (native profiles, not release acceptance)
+Seven pristine English vanilla identities plus the separately gated Jessie & James release.
+FireRed and LeafGreen rev 0/1, Emerald rev 0, Ruby and Sapphire rev 0.
+RS uses fixed unencrypted save blocks, 32-bit party count, IWRAM party/event
+arrays, and the revision's actual symbol table; no ROM header-only admission.
+FRLG and Emerald have separate bag and party callback witnesses; Emerald's
+five-pocket BagPosition is not FRLG's three pocket layout. RS menus still use
+vision; RS battle controller labels were matched to the pret source function
+order and must be corroborated by actual on-screen cursor before automation.
+The current player always retains vision fallback and cannot admit unknown
+hacks merely because they use a familiar header.
 
-Source: exact English vanilla symbols from pret/pokefirered symbols branch:
-https://raw.githubusercontent.com/pret/pokefirered/symbols/pokefirered.sym
-https://raw.githubusercontent.com/pret/pokefirered/symbols/pokefirered_rev1.sym
-https://raw.githubusercontent.com/pret/pokefirered/symbols/pokeleafgreen.sym
-and pret/pokeemerald:
-https://raw.githubusercontent.com/pret/pokeemerald/symbols/pokeemerald.sym
-SHA-1 identity reference: 40Cakes/pokebot-gen3 modules/roms.py at
-f14ab79db960315db02333928ba444f9d425b6fc.
+Source addresses: 40Cakes/pokebot-gen3 commit f14ab79db960315db02333928ba444f9d425b6fc,
+modules/data/symbols/:
+- pokefirered.sym blob 5377ee48ca773d012000302545b477c936f40d46
+- pokefirered_rev1.sym blob 7ad94aaabfdcfb976ce4d1f532561b8668feefe7
+- pokeleafgreen.sym blob 2817a977dc8a48158591a12663a8d23d8f43fd0d
+- pokeleafgreen_rev1.sym blob c973dbbced397553cb4bef1f99d4e856f769976f
+- pokeemerald.sym blob df0cf99d7a88abc26234cc1ce5c3200a9794bdfb
+- pokeruby.sym blob 5ede97531d6e478c85b7783f49acb577d7b7bc0c
+- pokesapphire.sym blob 0de78dc8f0f02b768f13ccd08fc927bef975ded4
+RS SaveBlock1 and battle_controller_player.c are cross-checked against
+pret/pokeruby; Emerald BagPosition and PartyMenu against pret/pokeemerald
+include/item_menu.h, include/party_menu.h and include/constants/item.h.
+Only numeric symbol facts used; no PokéBot GPL gameplay code copied.
 
-Vanilla FireRed v1.0/v1.1, LeafGreen v1.0 and Emerald now have separate
-symbol-based read-only field, inventory, party and single-battle adapters
-integrated into the existing v1 autoplay loop. They reuse the current
-upstream-derived battle/type logic, field navigation, NPC/warp exploration,
-and existing checkpoint and queue. Runtime party count, checksum, active
-battler, controller callback, collision geometry and movement/visual
-corroboration still gate actual use. The exact Jessie & James profile is
-unchanged. Native vanilla menu driver is not yet enabled; vision handles
-unverified bag/party screens. Unknown hacks remain vision-only, not falsely
-admitted as vanilla. Full pinned upstream story dispatcher is still LeafGreen
-v1.0 only. No actual ROM data is committed.
-
-These are implementation profiles, not certified gameplay passes. Require
-private native evidence for movement, battle, catch, healing, save/reload,
-and story progression before declaring acceptance.
+All profiles still require actual native visual/position/party evidence.
+No native retail gameplay acceptance is established by fixture CI.
