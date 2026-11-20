@@ -20,6 +20,7 @@ from core.live import Live, LiveError
 from core.gameplay import TYPES, clean_observation, policy, remember, memory_context
 from core.rom_catalog import try_catalog
 from core.jj_fast import Adapter, quick_dialogue, ordinary_dialogue
+from core.jj_battle import BattleAdapter
 
 BUTTONS={"A":1,"B":2,"SELECT":4,"START":8,"RIGHT":16,"LEFT":32,"UP":64,"DOWN":128,"R":256,"L":512,"WAIT":0}
 SCHEMA={"type":"object","additionalProperties":False,"required":["scene","objective","actions","review"],"properties":{
@@ -120,7 +121,7 @@ class OllamaVision:
         # and independent local model if the main response fails.
         last=history[-1].get("observed_stage","") if history else ""
         turn=history[-1].get("decision",len(history)) if history else 0
-        rich=last in ("field","battle_command","battle_moves","bag","party") or turn%5==0
+        rich=last in ("field","battle_command","battle_moves","bag","party") or turn%5==0 or bool(self.structured and self.structured.get("observe_battle_menu"))
         trials=[(self.model,rich),(self.model,False),(self.fallback,False)]
         error=None
         for model,detail in dict.fromkeys(trials):
@@ -231,6 +232,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
     if prior:meta,state,rgb=prior
     catalog=try_catalog(rom,sha,goal)
     adapter=Adapter(rom,sha)
+    battles=BattleAdapter(rom,sha,goal,catalog)
     live=None
     def open_live(state=None):
         inst=Live(runner,rom,sha)
@@ -249,13 +251,23 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if should_stop():return "STOPPED",meta,rgb
             adapter.attach(live)
             field_before=adapter.candidate(rgb)
-            if isinstance(model,OllamaVision):model.structured=adapter.structured(field_before,meta)
+            battle_before=battles.snapshot(live)
+            if isinstance(model,OllamaVision):
+                model.structured=adapter.structured(field_before,meta)
+                if model.structured is not None:model.structured["inventory"]=battles.bag(live)
+                native_battle=battles.summary(battle_before,meta)
+                if native_battle is not None:model.structured={"battle":native_battle}
+                # First vision witness is prompted to identify stage/cursor independently.
+                if battle_before and native_battle is None:model.structured={"observe_battle_menu":True}
             screen=digest(rgb);history=meta["history"]
             blocked=[h["actions"] for h in history if h["before"]==screen==h["after"]]
             decision=guidance(meta,screen)
             source="remote_guidance" if decision else "vision"
-            route_expected=None;dialogue_page=None
-            if decision is None and adapter.admitted:
+            route_expected=None;dialogue_page=None;battle_signature=None
+            if decision is None:
+                combat=battles.action(battle_before,meta)
+                if combat:decision,battle_signature=combat;source="native_battle"
+            if decision is None and adapter.admitted and battle_before is None:
                 fast=quick_dialogue(rgb,meta)
                 if fast:decision,dialogue_page=fast;source="fast_dialogue"
                 else:
@@ -283,14 +295,19 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if should_stop():return "STOPPED",meta,rgb
             obs=decision.get("observation",{})
             if catalog:obs=catalog.enrich(obs)
+            if source.startswith("vision"):
+                battles.corroborate(battle_before,obs,meta)
+                if not decision["review"]:
+                    combat=battles.action(battle_before,meta)
+                    if combat:decision,battle_signature=combat;source="native_battle"
             meta["catalog_active"]=catalog is not None
             if source.startswith("vision") and not decision["review"] and adapter.start_route(field_before,meta,decision.get("field_target")):
                 route=adapter.route_action(field_before,meta)
                 if route:decision,route_expected=route;source="native_route"
-            planned=policy(obs,goal,history,screen) if not decision["review"] and source not in ("remote_guidance","native_route","fast_dialogue") else None
+            planned=policy(obs,goal,history,screen) if not decision["review"] and source not in ("remote_guidance","native_route","fast_dialogue","native_battle") else None
             if planned and planned[0]:
                 decision={**decision,"actions":planned[0],"objective":planned[1][:240]};source="pokemon_policy"
-            actions=decision["actions"] if source=="remote_guidance" else choose(decision,history,screen)
+            actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route") else choose(decision,history,screen)
             if not actions:
                 meta["review"]={"scene":decision["scene"],"objective":decision["objective"],"reason":"model review" if decision["review"] else "no untried bounded action"}
                 save_progress(path,identity,meta,live.save_state(),rgb)
@@ -320,6 +337,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             # Keep recent decision history in the atomic checkpoint; append full audit locally.
             if obs:entry["observed_stage"]=obs.get("stage","other")
             if dialogue_page:entry["dialogue_page"]=dialogue_page
+            if battle_signature:entry["battle_signature"]=battle_signature
             if source=="native_route":entry["expected_tile"]=list(route_expected)
             if source=="fast_dialogue":
                 pages=folder/"dialogue_pages";pages.mkdir(exist_ok=True)
@@ -334,7 +352,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 shutil.copyfile(path,backup);os.replace(backup,folder/"previous.bin")
             save_progress(path,identity,meta,state,rgb)
             with (folder/"actions.jsonl").open("a",encoding="utf-8") as log:log.write(json.dumps(entry,ensure_ascii=True)+"\n")
-            if meta["decisions"]==1 or (meta["decisions"]%5==0 and (source not in ("fast_dialogue","native_route") or time.monotonic()-last_report>=30)):
+            if meta["decisions"]==1 or (meta["decisions"]%5==0 and (source not in ("fast_dialogue","native_route","native_battle") or time.monotonic()-last_report>=30)):
                 report("RUNNING",meta,rgb);last_report=time.monotonic()
             if len(meta["history"])>=24 and len({h["after"] for h in meta["history"][-24:]})<=2:
                 meta["review"]={"scene":decision["scene"],"objective":decision["objective"],"reason":"repeated screen cycle; alternative action required"}

@@ -72,13 +72,15 @@ class Catalog:
             row=move_row(rom,i)
             if name_key(read_name(rom,MOVE_NAMES,13,i))!=name_key(name) or not row or row["type"]!=t or not row["power"]:
                 raise ValueError("Move table anchor mismatch")
-        self.species={};self.moves={}
+        self.species={};self.moves={};self.move_ids={}
         for i in range(1,412):
             name=name_key(read_name(rom,SPECIES_NAMES,11,i));row=species_row(rom,i)
             if name and row:self.species[name]=row if name not in self.species else None
         for i in range(1,355):
             name=name_key(read_name(rom,MOVE_NAMES,13,i));row=move_row(rom,i)
-            if name and row:self.moves[name]=row if name not in self.moves else None
+            if name and row:
+                self.moves[name]=row if name not in self.moves else None
+                self.move_ids[i]=dict(row,name=name)
 
     def enrich(self,obs):
         if obs.get("stage") not in ("battle_command","battle_moves","bag","party"):return obs
