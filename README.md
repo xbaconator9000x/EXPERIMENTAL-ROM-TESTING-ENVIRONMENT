@@ -35,3 +35,5 @@ The local read-only native transport and FireRed field reader feed the route pla
 ## FireRed state reader
 
 The ABI follows `SaveBlock1`, `MapHeader`, `MapLayout` and `VMap` in [pret/pokefirered](https://github.com/pret/pokefirered/tree/ce6406d8c2eaf46d543c8a2606de0c3cb1951982), particularly `include/global.h`, `include/global.fieldmap.h` and `include/fieldmap.h`. A `Profile` requires exact verified addresses for each game revision; use the same expected hash when opening `Live`. Public CI uses a synthetic ARM fixture only. Plain intra-map walking is not complete gameplay automation.
+
+For local, exact-release reconstruction and observational state probes, see [Jessie & James profile](profiles/jessie-james/README.md). Public CI still uses synthetic cartridges only.

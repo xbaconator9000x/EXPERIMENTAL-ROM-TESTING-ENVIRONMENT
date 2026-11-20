@@ -41,7 +41,7 @@ class Live:
             if not chunk:
                 raise LiveError("emulator exited")
             self.buffer += chunk
-            if len(self.buffer) > 70000:
+            if len(self.buffer) > 240*160*6+10:
                 raise LiveError("oversized emulator response")
         line, self.buffer = self.buffer.split(b"\n", 1)
         return line.decode("ascii")
@@ -71,6 +71,13 @@ class Live:
         if not result.startswith("OK "):
             raise LiveError("invalid frame response")
         return int(result[3:])
+
+    def screenshot(self, path):
+        result = self._request("FRAME")
+        if not result.startswith("RGB ") or len(result) != 4+240*160*6:
+            raise LiveError("invalid screenshot response")
+        with open(path, "xb") as file:
+            file.write(b"P6\n240 160\n255\n"+bytes.fromhex(result[4:]))
 
     def close(self):
         if self.proc is not None:

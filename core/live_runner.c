@@ -51,6 +51,17 @@ int main(int argc,char **argv){
                 for(unsigned i=0;i<n;++i)printf("%02x",c->busRead8(c,a+i));
                 putchar('\n');
             }
+        }else if(!strcmp(line,"FRAME\n")){
+            /* libmGBA's standard 32-bit RGBX color_t output. */
+            if(sizeof(color_t)!=4)puts("ERR pixel format");
+            else{
+                fputs("RGB ",stdout);
+                for(unsigned j=0;j<w*h;++j){
+                    uint32_t p=(uint32_t)video[j];
+                    printf("%02x%02x%02x",(unsigned)(p&255),(unsigned)((p>>8)&255),(unsigned)((p>>16)&255));
+                }
+                putchar('\n');
+            }
         }else if(sscanf(line,"STEP %x %u %c",&a,&n,&extra)==2){
             if(a>0x3ff||!n||n>600||n>200000u-frames)puts("ERR budget");
             else{
