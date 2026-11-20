@@ -160,7 +160,7 @@ TOOL_ARGS={
     "go_to_map":{"direction":str}, "use_move":{"move":str},
     "switch_pokemon":{"target":str}, "catch":{"nickname":str},
     "use_item":{"item":str,"target":str}, "reorder_party":{"first":str,"second":str},
-    "open_menu":{"menu":str}, "answer_prompt":{"answer":str},
+    "open_menu":{"menu":str}, "answer_prompt":{"answer":str}, "shop":{"item":str,"quantity":int},
     "quest":{"name":str}, "grind":{"level":int,"catch":bool},
     "inspect_pokemon":{"pokemon":str},
 }
@@ -184,6 +184,8 @@ def validate_tool(name,args):
         if type(v) is int and not 0<=v<=255:raise ValueError("invalid integer")
     if name=="press_button" and (args["button"].lower() not in KEYS or not 1<=args.get("times",1)<=10):
         raise ValueError("invalid button")
+    if name=="shop" and not 1<=args.get("quantity",1)<=20:
+        raise ValueError("invalid quantity")
     if name=="grind" and not 0<=args.get("level",0)<=100:
         raise ValueError("invalid level")
     return name,args
@@ -221,7 +223,10 @@ class SkillSession:
         from memory.long_term import LongTermMemory
         self.transport=SkillTransport(live,should_stop)
         self.reader=LeafGreenReader(self.transport)
-        self.client=AgentClient(self.transport,self.reader,LongTermMemory(path=str(folder/"upstream-memory.json")))
+        from core.upstream_shop import ReadOnlyShopMixin
+        class InputOnlyAgent(ReadOnlyShopMixin,AgentClient):
+            pass
+        self.client=InputOnlyAgent(self.transport,self.reader,LongTermMemory(path=str(folder/"upstream-memory.json")))
 
     def observe(self):
         from dataclasses import asdict

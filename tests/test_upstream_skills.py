@@ -49,7 +49,8 @@ class SkillTests(unittest.TestCase):
         self.assertEqual(f.steps,[])
     def test_tool_allowlist(self):
         self.assertEqual(validate_tool("use_move",{"move":"Tackle"})[0],"use_move")
-        for tool,args in [("load_state",{}),("use_move",{}),("press_button",{"button":"A","times":11}),("walk_to",{"x":1,"y":True}),("shop",{})]:
+        self.assertEqual(validate_tool("shop",{"item":"Potion","quantity":3})[0],"shop")
+        for tool,args in [("load_state",{}),("use_move",{}),("press_button",{"button":"A","times":11}),("walk_to",{"x":1,"y":True}),("shop",{"quantity":0})]:
             with self.assertRaises(ValueError):validate_tool(tool,args)
 
 if __name__=="__main__":
