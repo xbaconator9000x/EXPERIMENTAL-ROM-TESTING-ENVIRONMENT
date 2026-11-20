@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from tests.make_gba_fixture import make_rom
+from make_gba_fixture import make_rom
 from windows.host import build_command, fingerprint, import_rom, scenario_path
 
 
