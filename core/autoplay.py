@@ -21,6 +21,7 @@ from core.gameplay import TYPES, clean_observation, policy, remember, memory_con
 from core.rom_catalog import try_catalog
 from core.jj_fast import Adapter, quick_dialogue, ordinary_dialogue, SHA as JJ_SHA
 from core.jj_battle import BattleAdapter
+from core.gen3_profiles import open_profile, VanillaField, VanillaBattle
 from core.jj_explore import Explorer
 from core.jj_menus import MenuDriver,intent_from_battle
 from core.jj_runtime import NATIVE, animation_wait, record_field, count_decision, recovery_allowed
@@ -240,6 +241,12 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
     catalog=try_catalog(rom,sha,goal)
     adapter=Adapter(rom,sha)
     battles=BattleAdapter(rom,sha,goal,catalog)
+    vanilla,vanilla_catalog=open_profile(rom,sha)
+    if vanilla:
+        catalog=vanilla_catalog
+        adapter=VanillaField(vanilla,sha)
+        battles=VanillaBattle(vanilla,sha,catalog)
+    meta["rom_profile"]=vanilla.name if vanilla else ("Jessie & James exact profile" if sha==JJ_SHA else "vision-only")
     explorer=Explorer(adapter)
     menus=MenuDriver(rom,sha,battles)
     live=None
@@ -275,7 +282,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     model.structured["inventory"]=battles.bag(live)
                     party=model.structured.get("party")
                     if isinstance(party,list):meta["native_party_count"]=len(party)
-                    quest_state(meta,field_before,party)
+                    if sha==JJ_SHA:quest_state(meta,field_before,party)
                     # Reachability is computed only when the strategic model is called.
                 native_battle=battles.summary(battle_before,meta)
                 if native_battle is not None:model.structured={"battle":native_battle}
@@ -444,7 +451,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 if not page_file.exists() and sum(1 for _ in pages.glob("*.png"))<5000:page_file.write_bytes(png(rgb))
             meta["history"]=(history+[entry])[-80:]
             meta["quest_memory"]=remember(meta.get("quest_memory",{}),obs,decision,digest(after),meta["decisions"])
-            if adapter.admitted:quest_state(meta,field_after,None,obs,decision["objective"])
+            if sha==JJ_SHA and adapter.admitted:quest_state(meta,field_after,None,obs,decision["objective"])
             meta["native_diagnostics"]=diagnostic(adapter,battles,menus,field_after,meta)
             rgb=after
             if meta["decisions"]%10==0:

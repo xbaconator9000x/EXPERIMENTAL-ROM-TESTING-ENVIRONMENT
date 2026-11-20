@@ -7,12 +7,12 @@ from vendor.pokemon_agent.pathfinding import find_path
 
 FACING={1:"DOWN",2:"UP",3:"LEFT",4:"RIGHT"}
 
-def event_targets(live,rom_size,field):
+def event_targets(live,rom_size,field,map_header=MAP_HEADER,object_base=OBJECTS,vmap=None):
     """Only expose in-map coordinates from structurally checked ROM pointers."""
     def romread(ptr,n):
         if not span(ptr,n,0x08000000,0x08000000+rom_size):raise ValueError("event pointer")
         return live.read(ptr,n)
-    ptr=live.integer(MAP_HEADER+4,4)
+    ptr=live.integer(map_header+4,4)
     if ptr%4:raise ValueError("events alignment")
     data=romread(ptr,20);count=data[1];warps=[]
     if count>64:raise ValueError("warp count")
@@ -22,7 +22,7 @@ def event_targets(live,rom_size,field):
             x,y=signed(raw,i*8),signed(raw,i*8+2)
             if not (0<=x<field.width and 0<=y<field.height):raise ValueError("warp location")
             warps.append({"kind":"warp","x":x,"y":y,"id":i,"destination":[raw[i*8+7],raw[i*8+6]]})
-    objects=live.read(OBJECTS,36*16);npcs=[];facing=None
+    objects=live.read(object_base,36*16);npcs=[];facing=None
     for i in range(16):
         o=objects[i*36:(i+1)*36];flags=u(o,0,4)
         if not flags&1:continue
@@ -31,7 +31,7 @@ def event_targets(live,rom_size,field):
         if flags&0x2000:continue # invisible
         if 0<=x<field.width and 0<=y<field.height:
             npcs.append({"kind":"npc","x":x,"y":y,"id":o[8],"gfx":o[5]})
-    try:connections=crossings(live,rom_size,field)
+    try:connections=crossings(live,rom_size,field,map_header=map_header,**({"vmap":vmap} if vmap is not None else {}))
     except (ValueError,LiveError,IndexError):connections=[]
     return warps+npcs+connections,facing
 
@@ -60,7 +60,7 @@ class Explorer:
     def __init__(self,adapter):self.adapter=adapter
     def inspect(self,candidate,meta):
         if not self.adapter.verified_field(candidate,meta):return None
-        try:return event_targets(self.adapter.live,self.adapter.size,candidate[0])
+        try:return event_targets(self.adapter.live,self.adapter.size,candidate[0],getattr(self.adapter,"map_header",MAP_HEADER),getattr(self.adapter,"objects",OBJECTS),getattr(self.adapter,"vmap",None))
         except (ValueError,LiveError,IndexError):return None
     def describe(self,candidate,meta,info):
         if not info:return {}
