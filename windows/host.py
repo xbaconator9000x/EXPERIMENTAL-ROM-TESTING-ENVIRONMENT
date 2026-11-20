@@ -16,8 +16,12 @@ import subprocess
 import sys
 import threading
 import time
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+try:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, ttk
+except ImportError:  # Headless Linux CI only tests platform-neutral core helpers.
+    tk = None
+    filedialog = messagebox = ttk = None
 
 REPO = Path(__file__).resolve().parent.parent
 ROOT = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "ROMTestingHost"
@@ -93,7 +97,7 @@ def build_command(rom: dict, scenario: Path, output: Path, runner: Path = RUNNER
             "--sha256", digest, "--scenario", str(scenario), "--out", str(output)]
 
 
-class Host(tk.Tk):
+class Host(tk.Tk if tk is not None else object):
     def __init__(self):
         super().__init__()
         self.title("ROM Testing Host | Windows")
@@ -256,4 +260,6 @@ class Host(tk.Tk):
 
 
 if __name__ == "__main__":
+    if tk is None:
+        raise SystemExit("Tkinter is required for the Windows desktop GUI")
     Host().mainloop()
