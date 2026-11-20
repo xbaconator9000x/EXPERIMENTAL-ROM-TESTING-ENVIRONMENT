@@ -23,6 +23,7 @@ from core.jj_fast import Adapter, quick_dialogue, ordinary_dialogue
 from core.jj_battle import BattleAdapter
 from core.jj_explore import Explorer
 from core.jj_menus import MenuDriver,intent_from_battle
+from core.jj_runtime import NATIVE, animation_wait, record_field, count_decision, recovery_allowed
 
 BUTTONS={"A":1,"B":2,"SELECT":4,"START":8,"RIGHT":16,"LEFT":32,"UP":64,"DOWN":128,"R":256,"L":512,"WAIT":0}
 SCHEMA={"type":"object","additionalProperties":False,"required":["scene","objective","actions","review"],"properties":{
@@ -125,7 +126,7 @@ class OllamaVision:
         # and independent local model if the main response fails.
         last=history[-1].get("observed_stage","") if history else ""
         turn=history[-1].get("decision",len(history)) if history else 0
-        rich=last in ("field","battle_command","battle_moves","bag","party") or turn%5==0 or bool(self.structured and self.structured.get("observe_battle_menu"))
+        rich=last in ("field","battle_command","battle_moves","bag","party") or turn%5==0 or bool(self.structured and (self.structured.get("observe_battle_menu") or self.structured.get("confirmation_required")))
         trials=[(self.model,rich),(self.model,False),(self.fallback,False)]
         error=None
         for model,detail in dict.fromkeys(trials):
@@ -255,6 +256,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
         session_frames=0;last_report=0.0
         while meta["decisions"]<max_decisions:
             if should_stop():return "STOPPED",meta,rgb
+            turn_started=time.perf_counter();model_elapsed=None
             adapter.attach(live)
             field_before=adapter.candidate(rgb)
             battle_before=battles.snapshot(live)
@@ -265,7 +267,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 model.structured=adapter.structured(field_before,meta)
                 if model.structured is not None:
                     model.structured["inventory"]=battles.bag(live)
-                    model.structured.update(explorer.describe(field_before,meta,events))
+                    # Reachability is computed only when the strategic model is called.
                 native_battle=battles.summary(battle_before,meta)
                 if native_battle is not None:model.structured={"battle":native_battle}
                 # First vision witness is prompted to identify stage/cursor independently.
@@ -283,13 +285,19 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if decision is None:
                 combat=battles.action(battle_before,meta)
                 if combat:decision,battle_signature=combat;source="native_battle"
-            if decision is None and adapter.admitted and battle_before is None:
+            if decision is None:
+                decision=animation_wait(live,battles,battle_before,meta)
+                if decision:source="native_battle_wait"
+            if decision is None and adapter.admitted and battle_before is None and not meta.get("menu_intent"):
                 fast=quick_dialogue(rgb,meta)
                 if fast:decision,dialogue_page=fast;source="fast_dialogue"
                 else:
                     event=explorer.next(field_before,meta,events)
                     if event:decision,event_command=event;source="native_explore"
                     else:meta.pop("event_goal",None)
+                if decision is None and recovery_allowed(field_before,meta,adapter.verified_field(field_before,meta)) and explorer.request(field_before,meta,events,"explore"):
+                    event=explorer.next(field_before,meta,events)
+                    if event:decision,event_command=event;source="native_explore";meta.pop("native_route",None)
                 if decision is None:
                     route=adapter.route_action(field_before,meta)
                     if route:decision,route_expected=route;source="native_route"
@@ -302,9 +310,12 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 source="transition_wait"
             try:
                 if decision is None:
+                    mstart=time.perf_counter()
                     if isinstance(model,OllamaVision):
+                        if model.structured and "map" in model.structured:model.structured.update(explorer.describe(field_before,meta,events))
                         decision=model.decide(rgb,goal,history,blocked,meta.get("quest_memory",{}));source=model.last_source
                     else:decision=model.decide(rgb,goal,history,blocked)
+                    model_elapsed=time.perf_counter()-mstart
                 decision=parse_decision(json.dumps(decision))
             except (ValueError,KeyError,OSError,TimeoutError) as exc:
                 meta["model_error"]=model_error(exc)
@@ -331,10 +342,10 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if source.startswith("vision") and not decision["review"] and adapter.start_route(field_before,meta,decision.get("field_target")):
                 route=adapter.route_action(field_before,meta)
                 if route:decision,route_expected=route;source="native_route"
-            planned=policy(obs,goal,history,screen) if not decision["review"] and source not in ("remote_guidance","native_route","fast_dialogue","native_battle","native_explore","native_menu") else None
+            planned=policy(obs,goal,history,screen) if not decision["review"] and source not in ("remote_guidance","native_route","fast_dialogue","native_battle","native_explore","native_menu","native_battle_wait") else None
             if planned and planned[0]:
                 decision={**decision,"actions":planned[0],"objective":planned[1][:240]};source="pokemon_policy"
-            actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route","native_explore","native_menu") else choose(decision,history,screen)
+            actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route","native_explore","native_menu","native_battle_wait") else choose(decision,history,screen)
             if not actions:
                 meta["review"]={"scene":decision["scene"],"objective":decision["objective"],"reason":"model review" if decision["review"] else "no untried bounded action"}
                 save_progress(path,identity,meta,live.save_state(),rgb)
@@ -362,7 +373,8 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 meta["menu_intent"]["remaining"]-=1
                 if meta["menu_intent"]["remaining"]<=0:meta.pop("menu_intent",None)
             field_after=adapter.candidate(after)
-            if source.startswith("vision"):adapter.observe_move(field_before,field_after,actions,meta)
+            if source.startswith("vision") or source=="remote_guidance":adapter.observe_move(field_before,field_after,actions,meta)
+            record_field(meta,field_after,adapter.verified_field(field_after,meta))
             if source=="native_explore":explorer.finish(meta,field_before,field_after,event_command)
             if source=="native_route":
                 if not field_after or not field_before or field_after[0].map_id!=field_before[0].map_id or field_after[0].pos!=route_expected:meta.pop("native_route",None)
@@ -375,6 +387,10 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if battle_signature:entry["battle_signature"]=battle_signature
             if menu_signature:entry["menu_signature"]=menu_signature
             if source=="native_route":entry["expected_tile"]=list(route_expected)
+            if field_after and adapter.verified_field(field_after,meta):entry["field_after"]={"map":list(field_after[0].map_id),"pos":list(field_after[0].pos)}
+            entry["elapsed_seconds"]=round(time.perf_counter()-turn_started,3)
+            if model_elapsed is not None:entry["model_seconds"]=round(model_elapsed,3)
+            count_decision(meta,source,entry["elapsed_seconds"],model_elapsed,cost)
             if source=="fast_dialogue":
                 pages=folder/"dialogue_pages";pages.mkdir(exist_ok=True)
                 page_file=pages/(dialogue_page+".png")

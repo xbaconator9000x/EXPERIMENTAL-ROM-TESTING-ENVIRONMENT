@@ -161,7 +161,9 @@ class Dashboard:
                 self.scene.configure(text=str(recent.get("scene","Waiting for first AI decision"))[:240])
                 self.objective.configure(text=str(recent.get("objective",identity.get("goal","—")))[:500])
                 self.controls.configure(text=action_text(recent) if recent else "—")
-                self.model.configure(text="Model: "+str(identity.get("model","—"))[:100])
+                stats=meta.get("engine_metrics",{})
+                suffix=f" | Native {stats.get('native',0)} | Model calls {stats.get('model_calls',0)}" if stats else ""
+                self.model.configure(text=("Model: "+str(identity.get("model","—"))+suffix)[:145])
                 self.history.configure(state="normal");self.history.delete("1.0","end")
                 for row in reversed(history[-12:]):
                     self.history.insert("end",f"#{row.get('decision','?')}  {action_text(row)}\n{str(row.get('scene',''))[:100]}\n\n")
