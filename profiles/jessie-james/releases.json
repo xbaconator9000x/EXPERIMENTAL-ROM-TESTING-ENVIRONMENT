@@ -5,15 +5,18 @@
     {
       "version": "English v1.0",
       "crc32": "C043455C",
-      "sha256": "a69cd2306ae494d4db0e16772d007438d425dd43cd5287757a5e04035551da4a"
+      "sha256": "a69cd2306ae494d4db0e16772d007438d425dd43cd5287757a5e04035551da4a",
+      "patch_sha256": "1efc4ef63c2da89d0f4c7b22ec8c8db9cf81d1a1514f489f6fa20c60d761fad9"
     },
     {
       "version": "English v1.01",
       "crc32": "A3E3CC2F",
-      "sha256": "06d9c87234400f45f1fc3a356881f0ad8bd9b977bc5cbed450e5c7eedd01b632"
+      "sha256": "06d9c87234400f45f1fc3a356881f0ad8bd9b977bc5cbed450e5c7eedd01b632",
+      "patch_sha256": "634a9867c57707e1951b54b5f33b0975452c649d099185915713625f6ef08ba7"
     }
   ],
   "stateMapping": "unverified",
   "gameplayAcceptance": "not_tested",
-  "source": "https://github.com/xbaconator9000x/Unofficial-Jessie-James-Edition-English-Translation"
+  "source": "https://github.com/xbaconator9000x/Unofficial-Jessie-James-Edition-English-Translation",
+  "source_sha256": "7fc313cb5d054005e5aefff4bc5c3a1121357ca02b5b205280e2a6e48f3a0a91"
 }
