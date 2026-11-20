@@ -28,6 +28,10 @@ python3 core/run_locked.py --runner build/state_runner --rom /private/game.gba -
 
 Scenario instructions: `press KEY frames`, `idle frames`, `wait width address mask expected timeout_frames`, `assert width address mask expected`, `capture`. A failed assertion or wait is a nonzero exit. Every scenario needs a successful assertion. A pass is specific to the observed conditions, not proof of full-game completion.
 
-The pathfinder is independently tested, not yet integrated with live game collision data. Game-specific RAM maps and story witnesses are not yet established. First gameplay gate: demonstrate the known Oak's lab failure on v1.0 and successful story progression on v1.01 using verified release hashes and ordinary inputs. Then expand to state-aware navigation, dialogue and battle control.
+The local read-only native transport and FireRed field reader feed the route planner from the live padded collision grid. Each step must produce the intended coordinates in the same map and verified field context; stalled or unexpected movement fails. The synthetic ARM fixture includes a real collision wall and checks the full four-step detour. Real-game symbol addresses, lock predicates, NPC occupancy, warps, ledges, dialogue and battle state are not yet verified. Do not use guessed addresses. First gameplay gate: demonstrate the known Oak's lab failure on v1.0 and successful story progression on v1.01 using verified release hashes and ordinary inputs. Then expand to state-aware navigation, dialogue and battle control.
 
 [Third-party navigation licence](vendor/pokemon_agent/LICENSE).
+
+## FireRed state reader
+
+The ABI follows `SaveBlock1`, `MapHeader`, `MapLayout` and `VMap` in [pret/pokefirered](https://github.com/pret/pokefirered/tree/ce6406d8c2eaf46d543c8a2606de0c3cb1951982), particularly `include/global.h`, `include/global.fieldmap.h` and `include/fieldmap.h`. A `Profile` requires exact verified addresses for each game revision; use the same expected hash when opening `Live`. Public CI uses a synthetic ARM fixture only. Plain intra-map walking is not complete gameplay automation.

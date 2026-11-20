@@ -22,3 +22,7 @@ if python3 core/run_locked.py --runner build/state_runner --rom build/synthetic.
   echo 'Wrong hash unexpectedly accepted'; exit 1
 fi
 echo 'PASS: synthetic native input and assertion regressions, not actual game acceptance'
+
+cc -std=c11 -O2 -Wall -Wextra core/live_runner.c -o build/live_runner -lmgba
+clang --target=arm-none-eabi -mcpu=arm7tdmi -fuse-ld=lld -nostdlib -Wl,-Ttext=0x080000c0,--oformat=binary tests/field_fixture.s -o build/field.bin
+python3 tests/native_walk.py | tee evidence/native-walk.log
