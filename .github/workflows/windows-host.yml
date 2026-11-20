@@ -35,6 +35,17 @@ jobs:
           gcc -std=gnu11 -O2 -Wall -Wextra core/state_runner.c -o build/state_runner.exe -lmgba
           gcc -std=gnu11 -O2 -Wall -Wextra core/live_runner.c -o build/live_runner.exe -lmgba
           printf 'MSYS2_UCRT64_BIN=%s\n' "$(cygpath -w /ucrt64/bin)" >> "$GITHUB_ENV"
+      - name: Validate pinned installer syntax and file manifest
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path windows/install_autoplay.ps1), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { $errors | Format-List; throw "Installer parse failed" }
+          $source = Get-Content windows/install_autoplay.ps1 -Raw
+          foreach ($match in [regex]::Matches($source, "'((core|windows|tests|docs)/[^']+\.(py|md))'")) {
+            if (!(Test-Path $match.Groups[1].Value)) { throw "Missing installer file: $($match.Groups[1].Value)" }
+          }
       - name: Python host and harness tests
         shell: pwsh
         run: |
