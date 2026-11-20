@@ -167,8 +167,11 @@ class VanillaField(Adapter):
     def structured(self,candidate,meta):
         if not self.verified_field(candidate,meta):return None
         f,cb,objects=candidate;x,y=f.pos;left=max(0,x-8);top=max(0,y-6)
+        # Emit one row per Y coordinate, not one character per row. The old
+        # flattened comprehension produced a malformed navigation grid.
         rows=["".join("P" if (i,j)==f.pos else "N" if (i,j) in objects else "." if f.passable(i,j) else "#"
-                     for i in range(left,min(left+17,f.width))) for j in range(top,min(top+13,f.height))]
+                      for i in range(left,min(left+17,f.width)))
+              for j in range(top,min(top+13,f.height))]
         out={"map":list(f.map_id),"player":list(f.pos),"origin":[left,top],"grid":rows,"legend":"P player,N object,. passable,# blocked"}
         try:out["party"]=party_snapshot(self.live,self.p)
         except (ValueError,LiveError):out["party"]=None
