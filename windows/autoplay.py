@@ -9,7 +9,7 @@ import re
 import time
 from pathlib import Path
 from core.autoplay import OllamaVision, play, png, load_progress
-from core.guidance import newest_guide
+from core.guidance import newest_guide, claim_guide
 from windows.host import ROOT, LIBRARY, REPO, fingerprint
 from windows.queue_host import Remote
 
@@ -88,34 +88,34 @@ def main():
                         last[0]=time.monotonic();remote.verify()
                         current=remote.request("/issues/"+str(number))
                         return current.get("state")!="open" or current.get("body")!=original or current.get("title")!=TITLE
-                    def guidance(meta,screen):
-                        # Fetch only bounded recent private issue comments.
-                        remote.verify()
-                        current=remote.request("/issues/"+str(number))
-                        if current.get("state")!="open" or current.get("body")!=original:return None
-                        count=current.get("comments",0)
-                        if type(count) is not int or count<1:return None
-                        page=max(1,(count+19)//20)
-                        rows=[]
-                        for i in range(max(1,page-1),page+1):
-                            rows+=remote.request("/issues/"+str(number)+"/comments?per_page=20&page="+str(i))
-                        return newest_guide(rows,remote.author,meta["decisions"],screen)
-                    # On review/crash, resume only when a new exact-state guide
-                    # is available. Preserve native checkpoint, no issue edits needed.
+                    guide_rows={"time":0.0,"rows":[]}
+                    def guidance(meta,screen,consume=False):
+                        if time.monotonic()-guide_rows["time"]>30:
+                            remote.verify()
+                            current=remote.request("/issues/"+str(number))
+                            if current.get("state")!="open" or current.get("body")!=original:return None
+                            count=current.get("comments",0)
+                            if type(count) is not int or count<1:return None
+                            page=max(1,(count+19)//20)
+                            rows=[]
+                            for i in range(max(1,page-1),page+1):
+                                rows+=remote.request("/issues/"+str(number)+"/comments?per_page=20&page="+str(i))
+                            guide_rows.update(time=time.monotonic(),rows=rows)
+                        proposal=newest_guide(guide_rows["rows"],remote.author,meta["decisions"],screen)
+                        if proposal and claim_guide(folder/"guides.json",meta["decisions"],screen,proposal,consume):
+                            return proposal
+                        return None
+                    # A failed guide is consumed before execution. An identical
+                    # command cannot endlessly restart a crashing checkpoint.
                     if done.is_file():
                         identity={"rom":job["sha256"],"runner":fingerprint(RUNNER),"goal":job["goal"],"model":a.model}
                         try:prior=load_progress(folder/"progress.bin",identity)
                         except (ValueError,OSError,KeyError):continue
                         if not prior or not guidance(prior[0],hashlib.sha256(prior[2]).hexdigest()):continue
                         done.unlink()
-                    guide_cache={"key":None,"time":0.0,"value":None}
                     def checked_guide(meta,screen):
-                        key=(meta["decisions"],screen)
-                        if key!=guide_cache["key"] or time.monotonic()-guide_cache["time"]>30:
-                            try:value=guidance(meta,screen)
-                            except (OSError,ValueError,KeyError):value=None
-                            guide_cache.update(key=key,time=time.monotonic(),value=value)
-                        return guide_cache["value"]
+                        try:return guidance(meta,screen,consume=True)
+                        except (OSError,ValueError,KeyError):return None
                     def report(status,meta,rgb):
                         print(f"#{number}: {status}, decisions={meta['decisions']}, frames={meta['frames']}",flush=True)
                         try:post(remote,number,status,meta,rgb)

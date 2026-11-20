@@ -1,6 +1,8 @@
 import json
 import unittest
-from core.guidance import PREFIX, parse_guide, newest_guide
+import tempfile
+from pathlib import Path
+from core.guidance import PREFIX, parse_guide, newest_guide, claim_guide
 from core.gameplay import clean_observation, item_policy
 from core.autoplay import OllamaVision
 
@@ -32,3 +34,13 @@ class RedundancyTests(unittest.TestCase):
         self.assertEqual(item_policy(o)[0],[{"button":"DOWN","frames":5}])
         self.assertEqual(item_policy({**o,"list_cursor":1})[0],[{"button":"A","frames":5}])
         self.assertIsNone(item_policy({**o,"wild":False}))
+
+    def test_guide_consumption_is_persistent(self):
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)/"guides.json";h="a"*64
+            v={"scene":"field","objective":"walk","actions":[{"button":"LEFT","frames":16}],"review":False}
+            self.assertTrue(claim_guide(p,4,h,v))
+            self.assertFalse(p.exists())
+            self.assertTrue(claim_guide(p,4,h,v,True))
+            self.assertFalse(claim_guide(p,4,h,v))
+            self.assertTrue(claim_guide(p,5,h,v))
