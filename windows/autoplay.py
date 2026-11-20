@@ -8,7 +8,8 @@ import os
 import re
 import time
 from pathlib import Path
-from core.autoplay import OllamaVision, play, png
+from core.autoplay import OllamaVision, play, png, load_progress
+from core.guidance import newest_guide
 from windows.host import ROOT, LIBRARY, REPO, fingerprint
 from windows.queue_host import Remote
 
@@ -44,7 +45,7 @@ def post(remote,number,status,meta,rgb):
     # Only a fixed, bounded screenshot and recent decisions. No states, ROM or files.
     remote.verify()
     payload={"status":status,"decisions":meta["decisions"],"frames":meta["frames"],
-             "history":meta.get("history",[])[-4:],"review":meta.get("review"),"failed_action":meta.get("failed_action"),"model_error":meta.get("model_error")}
+             "screen":hashlib.sha256(rgb).hexdigest(),"history":meta.get("history",[])[-4:],"review":meta.get("review"),"failed_action":meta.get("failed_action"),"model_error":meta.get("model_error")}
     remote.request("/issues/"+str(number)+"/comments",{"body":"ROM-AUTOPLAY v1\n"+json.dumps(payload,ensure_ascii=True,separators=(",",":"))})
     data=png(rgb);encoded=base64.b64encode(data).decode("ascii");parts=(len(encoded)+43999)//44000
     for i in range(parts):
@@ -54,12 +55,12 @@ def post(remote,number,status,meta,rgb):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--queue",required=True);p.add_argument("--author",required=True);p.add_argument("--model",default="qwen3-vl:4b-instruct")
+    p.add_argument("--queue",required=True);p.add_argument("--author",required=True);p.add_argument("--model",default="qwen3-vl:4b-instruct");p.add_argument("--fallback",default="qwen3-vl:2b-instruct")
     a=p.parse_args()
     if not RUNNER.is_file():raise SystemExit("Rebuild native runners first.")
     remote=Remote(a.queue,a.author,getpass.getpass("Private issue token: "),share_evidence=True)
     remote.verify()
-    model=OllamaVision(a.model)
+    model=OllamaVision(a.model,fallback=a.fallback)
     root=ROOT/"autoplay"/hashlib.sha256(a.queue.lower().encode()).hexdigest();root.mkdir(parents=True,exist_ok=True)
     # Windows exclusive lock prevents parallel controllers for this queue.
     import msvcrt
@@ -72,7 +73,10 @@ def main():
                 for issue in poll_goals(remote):
                     number=issue["number"];folder=root/str(issue["id"]);folder.mkdir(exist_ok=True)
                     done=folder/"terminal.json"
-                    if done.is_file():continue
+                    if done.is_file():
+                        try:finished=json.loads(done.read_text(encoding="utf-8"))
+                        except (ValueError,OSError):continue
+                        if finished.get("status") not in ("NEEDS_REVIEW","EMULATOR_ERROR"):continue
                     try:job=goal(issue.get("body"))
                     except ValueError:continue
                     rom=LIBRARY/(job["sha256"]+".gba")
@@ -84,12 +88,40 @@ def main():
                         last[0]=time.monotonic();remote.verify()
                         current=remote.request("/issues/"+str(number))
                         return current.get("state")!="open" or current.get("body")!=original or current.get("title")!=TITLE
+                    def guidance(meta,screen):
+                        # Fetch only bounded recent private issue comments.
+                        remote.verify()
+                        current=remote.request("/issues/"+str(number))
+                        if current.get("state")!="open" or current.get("body")!=original:return None
+                        count=current.get("comments",0)
+                        if type(count) is not int or count<1:return None
+                        page=max(1,(count+19)//20)
+                        rows=[]
+                        for i in range(max(1,page-1),page+1):
+                            rows+=remote.request("/issues/"+str(number)+"/comments?per_page=20&page="+str(i))
+                        return newest_guide(rows,remote.author,meta["decisions"],screen)
+                    # On review/crash, resume only when a new exact-state guide
+                    # is available. Preserve native checkpoint, no issue edits needed.
+                    if done.is_file():
+                        identity={"rom":job["sha256"],"runner":fingerprint(RUNNER),"goal":job["goal"],"model":a.model}
+                        try:prior=load_progress(folder/"progress.bin",identity)
+                        except (ValueError,OSError,KeyError):continue
+                        if not prior or not guidance(prior[0],hashlib.sha256(prior[2]).hexdigest()):continue
+                        done.unlink()
+                    guide_cache={"key":None,"time":0.0,"value":None}
+                    def checked_guide(meta,screen):
+                        key=(meta["decisions"],screen)
+                        if key!=guide_cache["key"] or time.monotonic()-guide_cache["time"]>30:
+                            try:value=guidance(meta,screen)
+                            except (OSError,ValueError,KeyError):value=None
+                            guide_cache.update(key=key,time=time.monotonic(),value=value)
+                        return guide_cache["value"]
                     def report(status,meta,rgb):
                         print(f"#{number}: {status}, decisions={meta['decisions']}, frames={meta['frames']}",flush=True)
                         try:post(remote,number,status,meta,rgb)
                         except (OSError,ValueError,KeyError):
                             print("Private progress report failed; local checkpoint retained.",flush=True)
-                    status,meta,rgb=play(RUNNER,rom,job["sha256"],job["goal"],folder,model,should_stop=stop,report=report)
+                    status,meta,rgb=play(RUNNER,rom,job["sha256"],job["goal"],folder,model,should_stop=stop,report=report,guidance=checked_guide)
                     if status!="STOPPED":
                         if status not in ("NEEDS_REVIEW","EMULATOR_ERROR","MODEL_UNAVAILABLE_OR_INVALID"):report(status,meta,rgb)
                         if status!="MODEL_UNAVAILABLE_OR_INVALID":

@@ -53,10 +53,10 @@ def clean_observation(raw):
     stage=raw.get("stage")
     if stage not in ("field","dialogue","battle_command","battle_moves","bag","party","title","menu","transition","other"):return {}
     out={"stage":stage}
-    for key in ("location","fact","target","enemy"):
+    for key in ("location","fact","target","enemy","bag_purpose"):
         v=raw.get(key)
         if isinstance(v,str) and 0<len(v)<=180 and not any(ord(c)<32 for c in v):out[key]=v
-    for key,lo,hi in (("cursor",0,3),("hp",0,100),("enemy_hp",0,100),("balls",0,999),("healing_items",0,999),("party_count",0,6)):
+    for key,lo,hi in (("cursor",0,3),("list_cursor",0,15),("hp",0,100),("enemy_hp",0,100),("balls",0,999),("healing_items",0,999),("party_count",0,6)):
         if number(raw.get(key),lo,hi):out[key]=raw[key]
     for key in ("wild","capture_target","enemy_status"):
         if type(raw.get(key)) is bool:out[key]=raw[key]
@@ -74,6 +74,12 @@ def clean_observation(raw):
             if not number(m.get("power"),0,250) or not number(m.get("pp"),0,64) or not number(m.get("accuracy"),1,100):continue
             clean.append({"slot":m["slot"],"name":m["name"],"type":mt.lower(),"power":m["power"],"pp":m["pp"],"accuracy":m["accuracy"]})
         if len({m["slot"] for m in clean})==len(clean):out["moves"]=clean
+    items=raw.get("items")
+    if isinstance(items,list) and 1<=len(items)<=16:
+        out["items"]=[{"slot":m["slot"],"name":m["name"],"count":m["count"]} for m in items if isinstance(m,dict) and number(m.get("slot"),0,15) and isinstance(m.get("name"),str) and 0<len(m["name"])<=40 and number(m.get("count"),1,999)]
+    party=raw.get("party")
+    if isinstance(party,list) and 1<=len(party)<=6:
+        out["party"]=[{"slot":m["slot"],"hp":m["hp"],"types":type_list(m.get("types"))} for m in party if isinstance(m,dict) and number(m.get("slot"),0,5) and number(m.get("hp"),0,100)]
     # Optional 15x10 screen-space grid; unknown/blocked tiles are impassable.
     # Coordinates are model estimates, not authoritative map collision.
     grid=raw.get("grid");start=raw.get("start");target=raw.get("destination")
@@ -112,6 +118,7 @@ def battle_policy(obs,modern=False):
         if heal:return cursor_action(cursor,1),"Open BAG to heal low HP"
         if throw:return cursor_action(cursor,1),"Open BAG to attempt a wild catch"
         # Don't select generic FIGHT when a switch/run is needed but unobserved.
+        if obs.get("hp",100)<=15 and any(m["hp"]>30 for m in obs.get("party",[]) if m["slot"]!=0):return cursor_action(cursor,2),"Open POKéMON to switch from low HP"
         if obs.get("hp",100)<=15:return None
         if capture and obs.get("balls",0)==0:return None
         if obs.get("enemy_types"):return cursor_action(cursor,0),"Open FIGHT and inspect moves"
@@ -122,6 +129,22 @@ def battle_policy(obs,modern=False):
         if move:
             return cursor_action(cursor,move["slot"]),"Choose "+move["name"]+(" cautiously to weaken wild Pokémon" if capture else " by type, power, accuracy and PP")
     return None
+
+def item_policy(obs):
+    if obs.get("stage")!="bag" or obs.get("list_cursor") is None:return None
+    purpose=obs.get("bag_purpose","").lower()
+    cursor=obs["list_cursor"]
+    if purpose=="catch" and obs.get("wild") is True and obs.get("capture_target") is True:
+        allowed={"poke ball":1,"poké ball":1,"great ball":2,"ultra ball":3}
+    elif purpose=="heal":
+        allowed={"potion":1,"super potion":2,"hyper potion":3,"max potion":4,"full restore":5}
+    else:return None
+    choices=[(allowed[m["name"].lower()],m["slot"],m["name"]) for m in obs.get("items",[]) if m["name"].lower() in allowed]
+    if not choices:return None
+    if purpose=="heal" and obs.get("hp",100)>50:return None
+    # Use a small potion first; for capture prefer stronger ordinary balls.
+    _,slot,name=(min if purpose=="heal" else max)(choices)
+    return [act("A" if slot==cursor else ("DOWN" if slot>cursor else "UP"))],"Select observed "+name+" for "+purpose
 
 DIRECTIONS=(("UP",0,-1),("LEFT",-1,0),("RIGHT",1,0),("DOWN",0,1))
 def route_step(obs,blocked=()):
@@ -142,7 +165,7 @@ def route_step(obs,blocked=()):
 def policy(obs,goal,history,screen):
     if not obs:return None
     modern="modern" in goal.lower() and "classic" not in goal.lower()
-    result=battle_policy(obs,modern)
+    result=item_policy(obs) or battle_policy(obs,modern)
     if result:return result
     blocked={a["button"] for h in history[-20:] if h.get("before")==screen==h.get("after") for a in h.get("actions",[]) if a.get("button")}
     return route_step(obs,blocked)
@@ -159,7 +182,13 @@ def remember(memory,obs,decision,after,turn):
         old=next((v for v in places if v["location"]==place),None)
         if old:places.remove(old)
         places.append({"location":place,"target":obs.get("target",""),"turn":turn})
-    return {"facts":facts[-40:],"places":places[-30:],"last_objective":decision["objective"],"last_screen":after}
+    edges=list(memory.get("edges",[]))[-50:]
+    previous=memory.get("last_location")
+    current=obs.get("location")
+    if current and previous and previous!=current:
+        e={"from":previous,"to":current}
+        if e not in edges:edges.append(e)
+    return {"facts":facts[-40:],"places":places[-30:],"edges":edges[-50:],"last_location":current or previous,"last_objective":decision["objective"],"last_screen":after}
 
 def memory_context(memory):
-    return {"facts":memory.get("facts",[])[-12:],"places":memory.get("places",[])[-8:],"last_objective":memory.get("last_objective","")}
+    return {"facts":memory.get("facts",[])[-12:],"places":memory.get("places",[])[-8:],"last_objective":memory.get("last_objective",""),"observed_connections":memory.get("edges",[])[-8:]}
