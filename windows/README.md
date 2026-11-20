@@ -74,7 +74,44 @@ Create an issue titled exactly `[ROM-TEST v1]` with raw JSON (no Markdown fences
 
 The example is for the synthetic fixture only; use validated revision-specific assertions for real games. Only previously imported, exact SHA-256 ROMs are eligible. The queue accepts up to 500 bounded press/idle/assert/wait/capture instructions, 200,000 frames, 20 captures and 10 minutes per job. It rejects arbitrary commands, code, host paths, URLs, unknown users and public repositories. The ROM is copied into a disposable local folder, without existing saves. By default GitHub receives only a categorical result. Check the local **Share game screenshots and bounded diagnostics** box and confirm to additionally send exact 240×160 PNG framebuffer captures and filtered native diagnostics as bounded base64 JSON issue comments (ROM-EVIDENCE v1). No token permission change is needed. The host rechecks private repository identity before each upload, never sends ROMs/saves/arbitrary files, and resumes interrupted evidence transfers via its local ledger. Keep the repository private; evidence remains in its issue comments until deleted. Old completed v1 jobs cannot be backfilled automatically because their run folders were not associated with issue IDs. A dropped HTTP response can produce a duplicate part; consumers deduplicate by name, hash and part number. A final ROM-EVIDENCE-COMPLETE v1 comment lists the total number of unique parts, file names and result status. Do not treat incomplete evidence as a verified gameplay result. A durable ledger prevents automatic reruns; submit a new issue for a deliberate retry. A crash after claiming a job yields HOST_ERROR on reconnect. One process per queue is enforced. Use trusted local ROMs and run as a normal user; this is not an OS-level sandbox.
 
-Automatic startup, system tray, live video, existing save reuse and remotely dispatched autonomous game agents remain pending. The evidence transport supports subsequent adaptive decisions by an external controller, not unrestricted remote execution. Keep the queue private and allow only trusted repository collaborators.
+Automatic startup, system tray, live video, existing player save reuse and fully autonomous in-process game agents remain pending. The evidence transport supports subsequent adaptive decisions by an external controller, not unrestricted remote execution. Keep the queue private and allow only trusted repository collaborators.
+
+## Native checkpoint and ROM-only repair beta (upgraded host)
+
+Rebuild both native runners with windows/build.ps1 after updating the source.
+The new capabilities require explicit local opt-in checkboxes. Existing v1
+jobs and evidence sharing remain compatible.
+
+**Checkpoint jobs:** Same [ROM-TEST v1] issue title, but body version 2.
+Optional resume and checkpoint fields are immutable names (lowercase ASCII,
+1–48 characters, digits, underscore, hyphen). At least one assertion is
+still mandatory. Version 2 additionally allows observe WIDTH ADDRESS (up to
+32 observations in emulated EWRAM/IWRAM/VRAM; no remote filesystem or host
+memory reads). Observe results are included in filtered diagnostics.
+
+A successful job with checkpoint saves the real native mGBA serialized state
+locally. A later job with resume restores it before executing its scenario.
+States are isolated by private queue, exact ROM SHA-256 and runner executable
+SHA-256, integrity checked, and never transmitted. They are not cartridge
+Flash saves and do not establish Flash cold-reboot acceptance. Keep the same
+mGBA runtime version; incompatible states fail rather than silently restart.
+Up to 64 checkpoints per ROM/runner scope; local cleanup is manual. After
+restore, advance at least one frame before interpreting a screenshot.
+
+**ROM repair deployment:** An issue titled [ROM-PATCH v1] from the allowed
+author may carry raw JSON with version:1, source_sha256, target_sha256 and
+edits (sorted nonoverlapping equal-length hex old/new replacements and
+integer file offset). Maximum 128 edits and 8192 changed bytes. The exact
+local source and all old bytes must match, and the complete resulting ROM
+must match the requested target SHA-256. Publishes an immutable new ROM
+library entry, never overwrites the original, never executes host code,
+never imports a full remote ROM, and never sends existing ROM bytes/saves.
+A separate test issue runs the resulting ROM by its exact hash. Do not send
+proprietary bytes or private patches to public repositories.
+
+No arbitrary remote shell, code downloads or unattended host executable
+updates are enabled. Updating host source and rebuilding remains a local
+operator action.
 
 ## Windows CI
 

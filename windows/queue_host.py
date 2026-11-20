@@ -7,6 +7,10 @@ import zlib
 import json
 import os
 from pathlib import Path
+try:
+    from .local_state import NAME, load_checkpoint, store_checkpoint, checkpoint_path, install_patch, validate_patch
+except ImportError:
+    from local_state import NAME, load_checkpoint, store_checkpoint, checkpoint_path, install_patch, validate_patch
 import queue
 import re
 import shutil
@@ -22,9 +26,11 @@ except ImportError:
     from host import ROOT, LIBRARY, RUNS, RUNNER, fingerprint, tk, ttk, messagebox
 
 TITLE = "[ROM-TEST v1]"
+PATCH_TITLE = "[ROM-PATCH v1]"
 KEYS = set("A B SELECT START RIGHT LEFT UP DOWN R L".split())
 STATUSES = {"PASS","FAIL","TIMEOUT","CANCELLED","INVALID_JOB","ROM_NOT_REGISTERED",
-            "ROM_HASH_MISMATCH","RUNNER_NOT_INSTALLED","HOST_ERROR"}
+            "ROM_HASH_MISMATCH","RUNNER_NOT_INSTALLED","HOST_ERROR","CHECKPOINT_NOT_FOUND",
+            "CHECKPOINT_INVALID","CHECKPOINT_EXISTS","CAPABILITY_DISABLED","PATCH_INSTALLED","PATCH_SOURCE_MISMATCH","PATCH_TARGET_MISMATCH"}
 
 def number(s):
     if not re.fullmatch(r"(?:0[xX][0-9a-fA-F]{1,8}|0|[1-9][0-9]{0,9})",s):
@@ -42,13 +48,24 @@ def validate(body):
             d[k]=v
         return d
     job=json.loads(body,object_pairs_hook=unique)
-    if type(job) is not dict or set(job)!={"version","sha256","scenario"} or type(job["version"]) is not int or job["version"]!=1:
+    if type(job) is not dict or type(job.get("version")) is not int:
         raise ValueError("Unsupported job schema")
+    version=job["version"]
+    required={"version","sha256","scenario"}
+    if version==1:
+        if set(job)!=required:raise ValueError("Unsupported v1 fields")
+    elif version==2:
+        if not required<=set(job)<=required|{"resume","checkpoint"}:raise ValueError("Unsupported v2 fields")
+        for field in ("resume","checkpoint"):
+            if field in job and (type(job[field]) is not str or not NAME.fullmatch(job[field])):
+                raise ValueError("Invalid checkpoint name")
+        if job.get("resume") and job.get("resume")==job.get("checkpoint"):raise ValueError("Checkpoint is immutable")
+    else:raise ValueError("Unsupported job version")
     if not isinstance(job["sha256"],str) or not re.fullmatch(r"[a-f0-9]{64}",job["sha256"]):
         raise ValueError("Invalid ROM SHA256")
     lines=job["scenario"]
     if type(lines) is not list or not 1<=len(lines)<=500: raise ValueError("Invalid scenario size")
-    frames=checks=captures=0
+    frames=checks=captures=observations=0
     normalized=[]
     for line in lines:
         if type(line) is not str or not line.isascii() or len(line)>120 or "\n" in line or "\r" in line:
@@ -72,14 +89,23 @@ def validate(body):
                 if not n:raise ValueError("Zero wait")
                 frames+=n
             checks+=1
+        elif op=="observe" and version==2 and len(t)==3:
+            w,a=map(number,t[1:])
+            if w not in (8,16,32):raise ValueError("Invalid observe width")
+            n=w//8
+            if a%n or not any(lo<=a<=hi-n for lo,hi in ((0x02000000,0x02040000),(0x03000000,0x03008000),(0x06000000,0x06018000))):
+                raise ValueError("Observe outside permitted emulator memory")
+            observations+=1
         elif op=="capture" and len(t)==1:captures+=1
         else:raise ValueError("Unsupported instruction")
         normalized.append(" ".join(t))
-    if not checks or frames>200000 or captures>20:raise ValueError("Scenario exceeds limits or lacks assertion")
-    return {"version":1,"sha256":job["sha256"],"scenario":normalized}
+    if not checks or frames>200000 or captures>20 or observations>32:raise ValueError("Scenario exceeds limits or lacks assertion")
+    return {**job,"scenario":normalized}
 
-def run(job,stop,runner=RUNNER,library=LIBRARY,runs=RUNS,timeout=600,run_id=None):
+def run(job,stop,runner=RUNNER,library=LIBRARY,runs=RUNS,timeout=600,run_id=None,checkpoint_root=None,allow_v2=False):
     job=validate(json.dumps(job))
+    v2=job["version"]==2
+    if v2 and not allow_v2:return "CAPABILITY_DISABLED"
     if not runner.is_file():return "RUNNER_NOT_INSTALLED"
     sha=job["sha256"]
     source=library/(sha+".gba")
@@ -88,6 +114,16 @@ def run(job,stop,runner=RUNNER,library=LIBRARY,runs=RUNS,timeout=600,run_id=None
     run_id="remote-"+uuid.uuid4().hex if run_id is None else run_id
     if not re.fullmatch(r"remote-[a-f0-9]{32}",run_id):raise ValueError("Invalid run id")
     folder=runs/run_id
+    input_state=output_state=None
+    if v2:
+        if checkpoint_root is None:return "CAPABILITY_DISABLED"
+        runner_sha=fingerprint(runner)
+        if job.get("resume"):
+            input_state=checkpoint_path(checkpoint_root,sha,runner_sha,job["resume"])
+            if not input_state.is_file():return "CHECKPOINT_NOT_FOUND"
+        if job.get("checkpoint"):
+            output_state=checkpoint_path(checkpoint_root,sha,runner_sha,job["checkpoint"])
+            if output_state.exists():return "CHECKPOINT_EXISTS"
     folder.mkdir(parents=True)
     with tempfile.TemporaryDirectory(dir=folder,prefix="private-") as work:
         work=Path(work)
@@ -99,8 +135,14 @@ def run(job,stop,runner=RUNNER,library=LIBRARY,runs=RUNS,timeout=600,run_id=None
         env=os.environ.copy()
         binpath=env.get("MSYS2_UCRT64_BIN",r"C:\msys64\ucrt64\bin")
         env["PATH"]=binpath+os.pathsep+env.get("PATH","")
+        cmd=[str(runner.resolve()),str(rom),str(scenario),str(folder/"captures")]
+        if v2:
+            try:
+                if input_state:(work/"resume.bin").write_bytes(load_checkpoint(input_state,sha,runner_sha))
+            except (ValueError,OSError):return "CHECKPOINT_INVALID"
+            cmd.extend([str(work/"resume.bin") if input_state else "-",str(work/"checkpoint.bin") if output_state else "-"])
         with (folder/"native.log").open("wb") as log:
-            p=subprocess.Popen([str(runner.resolve()),str(rom),str(scenario),str(folder/"captures")],
+            p=subprocess.Popen(cmd,
                     cwd=work,env=env,stdout=log,stderr=subprocess.STDOUT,
                     creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
             try:
@@ -114,6 +156,10 @@ def run(job,stop,runner=RUNNER,library=LIBRARY,runs=RUNS,timeout=600,run_id=None
                 if p.poll() is None:p.kill();p.wait()
         log=(folder/"native.log").read_text(encoding="utf-8",errors="replace")
         if p.returncode==0 and re.search(r"^RESULT PASS frame=\d+ checks=[1-9]\d* line=\d+ core_crash=0\s*$",log,re.M):
+            if output_state:
+                try:store_checkpoint(output_state,sha,runner_sha,work/"checkpoint.bin")
+                except FileExistsError:return "CHECKPOINT_EXISTS"
+                except (ValueError,OSError):return "CHECKPOINT_INVALID"
             return "PASS"
         return "FAIL"
 
@@ -150,6 +196,7 @@ def safe_log(path):
         re.compile(r"INPUT line=\d+ frame=\d+ keys=-?\d+ duration=\d+"),
         re.compile(r"(?:PASS|FAIL) line=\d+ frame=\d+ addr=[0-9a-fA-F]{8} actual=[0-9a-fA-F]{8} mask=[0-9a-fA-F]{8} expected=[0-9a-fA-F]{8}"),
         re.compile(r"RESULT (?:PASS|FAIL) frame=\d+ checks=\d+ line=\d+ core_crash=[01]"),
+        re.compile(r"OBSERVE line=\d+ frame=\d+ width=(?:8|16|32) addr=[0-9a-fA-F]{8} actual=[0-9a-fA-F]{8}"),
         re.compile(r"(?:GBA(?: [A-Za-z]+)*|ARM|GB): [A-Za-z0-9 ,:()_.+!?\-]{1,180}"),
     )
     with path.open("rb") as f:
@@ -194,13 +241,15 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):raise ValueError("Unexpected redirect")
 
 class Remote:
-    def __init__(self,repo,author,token,share_evidence=False):
+    def __init__(self,repo,author,token,share_evidence=False,allow_v2=False,allow_patch=False):
         if not re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9_.-]+",repo) or not re.fullmatch(r"[A-Za-z0-9-]{1,39}",author) or not token:
             raise ValueError("Invalid settings")
         self.base="https://api.github.com/repos/"+repo
         self.author=author.lower()
         self.token=token
         self.share_evidence=bool(share_evidence)
+        self.allow_v2=bool(allow_v2)
+        self.allow_patch=bool(allow_patch)
         self.repo_id=None
         self.opener=urllib.request.build_opener(NoRedirect)
     def request(self,path="",data=None):
@@ -225,7 +274,7 @@ class Remote:
             rows=self.request("/issues?state=open&sort=created&direction=desc&per_page=100&page="+str(page))
             if not isinstance(rows,list):raise ValueError("Invalid issue response")
             for issue in rows:
-                if ("pull_request" not in issue and issue.get("title")==TITLE
+                if ("pull_request" not in issue and (issue.get("title")==TITLE or (self.allow_patch and issue.get("title")==PATCH_TITLE))
                     and issue.get("user",{}).get("login","").lower()==self.author
                     and type(issue.get("id")) is int and type(issue.get("number")) is int):
                     yield issue
@@ -264,11 +313,17 @@ def poll(remote,path,stop,emit):
                     if key not in ledger:
                         ledger[key]={"status":"HOST_ERROR","posted":False,"run_id":"remote-"+uuid.uuid4().hex,"evidence_next":0}
                         write_ledger(path,ledger)
-                        try:job=validate(issue.get("body"))
+                        try:
+                            patch=issue.get("title")==PATCH_TITLE
+                            job=validate_patch(issue.get("body")) if patch else validate(issue.get("body"))
                         except Exception:status="INVALID_JOB"
                         else:
                             emit("Running issue #"+str(issue["number"]))
-                            try:status=run(job,stop,run_id=ledger[key]["run_id"])
+                            try:
+                                if patch:
+                                    status=install_patch(job,LIBRARY) if remote.allow_patch else "CAPABILITY_DISABLED"
+                                else:
+                                    status=run(job,stop,run_id=ledger[key]["run_id"],checkpoint_root=ROOT/"checkpoints"/path.stem,allow_v2=remote.allow_v2)
                             except Exception:status="HOST_ERROR"
                         ledger[key]["status"]=status
                         write_ledger(path,ledger)
@@ -298,7 +353,7 @@ def poll(remote,path,stop,emit):
 
 def main():
     if tk is None:raise SystemExit("Tkinter required")
-    window=tk.Tk();window.title("ROM Testing Host | Private queue");window.geometry("730x500")
+    window=tk.Tk();window.title("ROM Testing Host | Private queue");window.geometry("780x560")
     box=ttk.Frame(window,padding=18);box.pack(fill="both",expand=True)
     ttk.Label(box,text="Private remote testing queue",font=("Segoe UI",18,"bold")).pack(anchor="w")
     ttk.Label(box,text="Only bounded GBA scenarios. No incoming connections or remote code.").pack(anchor="w",pady=(0,12))
@@ -311,6 +366,10 @@ def main():
     share=tk.BooleanVar(value=False)
     ttk.Checkbutton(box,text="Share game screenshots and bounded diagnostics in this private queue",variable=share).pack(anchor="w",pady=4)
     ttk.Label(box,text="ROMs, saves and arbitrary files stay local. Keep the repository private.").pack(anchor="w")
+    checkpoints=tk.BooleanVar(value=False)
+    patches=tk.BooleanVar(value=False)
+    ttk.Checkbutton(box,text="Allow local emulator checkpoints and bounded RAM observations (v2)",variable=checkpoints).pack(anchor="w",pady=3)
+    ttk.Checkbutton(box,text="Allow hash-locked ROM-only repair deployment (never overwrite originals)",variable=patches).pack(anchor="w",pady=3)
     status=tk.StringVar(value="Stopped");ttk.Label(box,textvariable=status).pack(anchor="w",pady=8)
     actions=ttk.Frame(box);actions.pack(fill="x")
     log=tk.Text(box,height=9,state="disabled",wrap="word");log.pack(fill="both",expand=True,pady=8)
@@ -318,9 +377,10 @@ def main():
     def start():
         nonlocal worker
         if worker and worker.is_alive():return
-        try:remote=Remote(repo.get().strip(),author.get().strip(),token.get().strip(),share_evidence=share.get())
+        try:remote=Remote(repo.get().strip(),author.get().strip(),token.get().strip(),share_evidence=share.get(),allow_v2=checkpoints.get(),allow_patch=patches.get())
         except ValueError as e:messagebox.showerror("Settings",str(e));return
         if share.get() and not messagebox.askyesno("Private evidence","Upload only test screenshots and filtered emulator diagnostics to this private GitHub issue queue? Keep the repository private."):return
+        if patches.get() and not messagebox.askyesno("ROM-only repairs","Permit trusted issue author to install bounded exact-hash edits to imported GBA ROM copies? Originals, saves and host code cannot be overwritten."):return
         if not RUNNER.is_file():messagebox.showerror("Native runner","Build the Windows runner first.");return
         key=hashlib.sha256(repo.get().strip().lower().encode()).hexdigest()
         token.set("");stop.clear()

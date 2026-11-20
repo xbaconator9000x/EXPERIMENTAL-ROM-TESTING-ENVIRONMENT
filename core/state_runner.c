@@ -57,8 +57,29 @@ static int capture(const char *dir,const uint32_t *pixels,unsigned line) {
     }
     return fclose(out)==0 && ok;
 }
+/* State files are fixed local worker paths chosen by the host, not issue data. */
+static int state_io(struct mCore *c,const char *path,int save) {
+    size_t n=c->stateSize(c);
+    if(!n||n>2u*1024u*1024u)return 0;
+    void *state=malloc(n);
+    if(!state)return 0;
+    int ok=0;
+    FILE *f=NULL;
+    if(save){
+        if(c->saveState(c,state) && (f=fopen(path,"wb"))!=NULL){
+            ok=fwrite(state,1,n,f)==n;
+            if(fclose(f))ok=0;
+        }
+    }else if((f=fopen(path,"rb"))!=NULL){
+        ok=fread(state,1,n,f)==n && fgetc(f)==EOF && !ferror(f);
+        if(fclose(f))ok=0;
+        if(ok)ok=c->loadState(c,state);
+    }
+    free(state);
+    return ok;
+}
 int main(int argc,char **argv) {
-    if(argc!=4){fprintf(stderr,"usage: %s ROM scenario outdir\n",argv[0]);return 2;}
+    if(argc!=4 && argc!=6){fprintf(stderr,"usage: %s ROM scenario outdir [state-in|- state-out|-]\n",argv[0]);return 2;}
     FILE *in=fopen(argv[2],"r"); if(!in){perror("scenario");return 2;}
     if(create_dir(argv[3])&&errno!=EEXIST){perror("output");fclose(in);return 2;}
     struct mCore *c=mCoreFind(argv[1]);
@@ -71,6 +92,7 @@ int main(int argc,char **argv) {
     if(!mCoreLoadFile(c,argv[1])) { free(pixels);c->deinit(c);fclose(in);return 4;}
     c->reset(c);
     char buf[512]; unsigned line=0; int status=0;
+    if(argc==6 && strcmp(argv[4],"-") && !state_io(c,argv[4],0))status=6;
     while(!status && fgets(buf,sizeof(buf),in)){
         ++line;
         if(!strchr(buf,'\n') && !feof(in)){status=2;break;}
@@ -104,6 +126,11 @@ int main(int argc,char **argv) {
             printf("%s line=%u frame=%u addr=%08x actual=%08x mask=%08x expected=%08x\n",
                    status?"FAIL":"PASS",line,frame,a,actual,mask,expected);
             if(!status)++checks;
+        } else if(!strcmp(v[0],"observe") && n==3){
+            uint32_t w,a;
+            if(!number(v[1],&w)||!number(v[2],&a)||!valid_addr(w,a)){status=2;break;}
+            printf("OBSERVE line=%u frame=%u width=%u addr=%08x actual=%08x\n",
+                   line,frame,w,a,read_value(c,w,a));
         } else if(!strcmp(v[0],"capture") && n==1){
             if(!capture(argv[3],pixels,line)) status=4;
         } else status=2;
@@ -111,6 +138,7 @@ int main(int argc,char **argv) {
     if(ferror(in))status=4;
     if(crashed)status=5;
     if(!status&&!checks)status=2;
+    if(!status && argc==6 && strcmp(argv[5],"-") && !state_io(c,argv[5],1))status=6;
     printf("RESULT %s frame=%u checks=%u line=%u core_crash=%d\n",status?"FAIL":"PASS",frame,checks,line,crashed);
     if(status)capture(argv[3],pixels,line);
     fclose(in);c->setKeys(c,0);c->unloadROM(c);c->deinit(c);free(pixels);
