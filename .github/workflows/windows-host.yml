@@ -34,6 +34,7 @@ jobs:
           mkdir -p build
           gcc -std=gnu11 -O2 -Wall -Wextra core/state_runner.c -o build/state_runner.exe -lmgba
           gcc -std=gnu11 -O2 -Wall -Wextra core/live_runner.c -o build/live_runner.exe -lmgba
+          printf 'MSYS2_UCRT64_BIN=%s\n' "$(cygpath -w /ucrt64/bin)" >> "$GITHUB_ENV"
       - name: Python host and harness tests
         shell: pwsh
         run: |

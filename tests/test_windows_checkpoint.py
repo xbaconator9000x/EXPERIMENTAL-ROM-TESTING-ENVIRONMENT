@@ -51,8 +51,12 @@ class LocalStateTests(unittest.TestCase):
             root=Path(d);lib=root/"roms";lib.mkdir();runs=root/"runs";states=root/"states"
             data=make_rom();rom=digest(data);(lib/(rom+".gba")).write_bytes(data)
             job={"version":2,"sha256":rom,"scenario":["wait 32 0x02000000 0xffffffff 1 60","press A 2","assert 32 0x02000000 0xffffffff 0","observe 32 0x02000000"],"checkpoint":"pressed"}
-            self.assertEqual(run(job,threading.Event(),RUNNER,lib,runs,checkpoint_root=states,allow_v2=True),"PASS")
+            status=run(job,threading.Event(),RUNNER,lib,runs,checkpoint_root=states,allow_v2=True)
+            logs="\n".join(p.read_text(errors="replace") for p in runs.glob("*/native.log"))
+            self.assertEqual(status,"PASS",logs)
             follow={"version":2,"sha256":rom,"resume":"pressed","scenario":["assert 32 0x02000000 0xffffffff 0","idle 2","assert 32 0x02000000 0xffffffff 1","capture"]}
-            self.assertEqual(run(follow,threading.Event(),RUNNER,lib,runs,checkpoint_root=states,allow_v2=True),"PASS")
+            status=run(follow,threading.Event(),RUNNER,lib,runs,checkpoint_root=states,allow_v2=True)
+            logs="\n".join(p.read_text(errors="replace") for p in runs.glob("*/native.log"))
+            self.assertEqual(status,"PASS",logs)
             self.assertEqual(run(job,threading.Event(),RUNNER,lib,runs,checkpoint_root=states,allow_v2=True),"CHECKPOINT_EXISTS")
             self.assertEqual(run({**follow,"resume":"missing"},threading.Event(),RUNNER,lib,runs,checkpoint_root=states,allow_v2=True),"CHECKPOINT_NOT_FOUND")
