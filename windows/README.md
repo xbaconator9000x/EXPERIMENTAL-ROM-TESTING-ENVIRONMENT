@@ -1,6 +1,6 @@
 # Native Windows testing host
 
-**Status:** First working desktop-host implementation. Not yet a remotely controlled GitHub queue.
+**Status:** Desktop host plus optional outbound-only private GitHub issue queue (beta).
 
 Works on Windows 10/11 x64 with the standard Python 3.11+ Tkinter GUI and
 native libmGBA from MSYS2 UCRT64. **No WSL, Ubuntu, Docker, GitHub token,
@@ -54,18 +54,27 @@ for the native engine, not yet a fully automatic game-playtesting agent.
 The first desktop version does not install a tray icon, startup task,
 headless daemon, remotely authorized queue or a live video monitor.
 
-## Remote operation later
+## Private remote queue (optional)
 
-A future remote queue should use a **dedicated private repository** and
-a properly scoped Windows self-hosted GitHub Actions runner, with job data
-validated and the ROM directory inaccessible to workflow upload steps.
-**Never register this machine as a persistent runner for our public
-development repositories.** Public pull requests and untrusted code must
-not be able to execute arbitrary commands on your personal PC.
+Create a separate private GitHub repository with Issues enabled. Never register a persistent self-hosted Actions runner against a public development repository. The queue is a restricted data protocol, not an Actions runner.
 
-The GUI currently neither fetches GitHub tasks nor accepts remote commands.
-A Windows PC must be turned on for local work, but **nothing is exposed to
-the internet by this release**.
+1. Create a fine-grained personal access token for **only** the private queue repository, with Issues read/write and Metadata read (automatic). Use a short expiry.
+2. After importing ROMs in the desktop host, launch the queue from the repository folder:
+   ```powershell
+   py -3 windows/queue_host.py
+   ```
+3. Enter the private repository owner/name, exact allowed issue author login, and token. Do not share the token in chat, commits, issue bodies or screenshots. The token stays in process memory and must be entered again after restart.
+4. Click Start polling. Leave the window open while your PC is available. Stop cancels the active test; no inbound port is opened.
+
+Create an issue titled exactly `[ROM-TEST v1]` with raw JSON (no Markdown fences), for example:
+
+```json
+{"version":1,"sha256":"replace_with_exact_64_character_rom_sha256","scenario":["idle 120","assert 32 0x02000000 1 1","capture"]}
+```
+
+The example is for the synthetic fixture only; use validated revision-specific assertions for real games. Only previously imported, exact SHA-256 ROMs are eligible. The queue accepts up to 500 bounded press/idle/assert/wait/capture instructions, 200,000 frames, 20 captures and 10 minutes per job. It rejects arbitrary commands, code, host paths, URLs, unknown users and public repositories. The ROM is copied into a disposable local folder, without existing saves. GitHub receives only a categorical result comment; all detailed logs and screenshots remain on the PC. A durable ledger prevents automatic reruns; submit a new issue for a deliberate retry. A crash after claiming a job yields HOST_ERROR on reconnect. One process per queue is enforced. Use trusted local ROMs and run as a normal user; this is not an OS-level sandbox.
+
+Automatic startup, system tray, live video, existing save reuse and remotely dispatched autonomous game agents remain pending. Keep the queue private and allow only trusted repository collaborators.
 
 ## Windows CI
 
