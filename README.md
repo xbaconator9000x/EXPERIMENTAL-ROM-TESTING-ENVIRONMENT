@@ -2,6 +2,15 @@
 
 Reusable, deterministic GBA gameplay regression tools built on libmGBA. The first target is Pokémon Team Rocket: Jessie & James Edition. The emulator runs normal controller inputs and reads game state; tests do not modify game RAM or depend on a model.
 
+## Native Windows desktop host
+
+The [Windows host](windows/README.md) is a native Python/Tkinter desktop
+control panel backed by Windows-compiled libmGBA. It imports owned ROMs
+into a private SHA-256-addressed local library, runs selected local scenarios,
+keeps evidence on the PC, and needs no WSL. The optional private GitHub
+remote queue and startup service are **not yet implemented**. The Windows
+workflow verifies the native engine against an authored synthetic cartridge.
+
 ## Layout
 
 - `core/` — native emulator runner and exact-ROM hash guard.
