@@ -33,3 +33,20 @@ class Tests(unittest.TestCase):
         self.assertEqual(replay(lambda s:Live(),b"x",[{"button":"A","frames":5}],24,{"A":1})[0],"REPLAY_FAILED")
         def broken(s):raise LiveError("setup")
         self.assertEqual(replay(broken,b"x",[],24,{})[0],"REPLAY_SETUP_FAILED")
+
+    def test_native_bootstrap_bounded(self):
+        from core.jj_unattended import bootstrap
+        from core.firered import Field
+        f=Field((1,2),(2,2),5,5,(0,)*25)
+        m={"history":history()}
+        self.assertEqual(len({bootstrap(m,(f,123,set()),"a")["actions"][0]["button"] for _ in range(4)}),4)
+        self.assertIsNone(bootstrap(m,(f,123,set()),"a"))
+    def test_replay_success_returns_state_and_rgb(self):
+        class Live:
+            def step(self,*a):pass
+            def close(self):pass
+            def save_state(self):return b"state"
+            def rgb(self):return bytes(115200)
+        status,result=replay(lambda s:Live(),b"x",[{"button":"A","frames":5}],24,{"A":1})
+        self.assertEqual(status,"REPLAY_SUCCEEDED")
+        self.assertEqual(result[0],b"state")

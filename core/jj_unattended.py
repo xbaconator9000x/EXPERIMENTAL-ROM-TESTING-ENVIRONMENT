@@ -104,7 +104,9 @@ def replay(open_live,state,actions,settle,buttons):
             probe.step(buttons[a["button"]],a["frames"]);probe.step(0,settle)
         return "REPLAY_SUCCEEDED",(probe.save_state(),probe.rgb())
     except (LiveError,OSError):return "REPLAY_FAILED",None
-    finally:probe.close()
+    finally:
+        try:probe.close()
+        except (OSError,LiveError):pass
 
 def diagnostic(adapter,battles,menus,field,meta):
     return {"version":VERSION,"field_rom":adapter.admitted,"field_candidate":bool(field),
@@ -114,3 +116,25 @@ def diagnostic(adapter,battles,menus,field,meta):
             "battle_callbacks":len(battles.callbacks),"battle_witnesses":len(meta.get("battle_proof",[])),
             "catalog":battles.catalog is not None,"inventory":battles.field_inventory,
             "bag_candidate":menus.bag_ok,"party_candidate":menus.party_ok}
+
+
+def bootstrap(meta,candidate,screen):
+    """Obtain native movement witnesses in a plausible field without model
+    calls for every probe. Same map/callback capped at four ordinary moves."""
+    if not candidate or not field_hint(meta.get("history",[])):return None
+    f,cb,occupied=candidate
+    previous=meta.get("field_proof",{}).get("directions",[])
+    key=str(cb)+":"+":".join(map(str,f.map_id))
+    ledger=meta.setdefault("bootstrap",{})
+    tried=ledger.setdefault(key,[])
+    if len(tried)>=4:return None
+    if len(ledger)>32:
+        for k in list(ledger)[:-32]:ledger.pop(k,None)
+    for d,(dx,dy) in DIR.items():
+        p=(f.pos[0]+dx,f.pos[1]+dy)
+        if d in previous or d in tried or p in occupied or not f.passable(*p):continue
+        action={"button":d,"frames":1}
+        if quarantined(meta,screen,[action]):continue
+        tried.append(d)
+        return {"scene":"field_calibration","objective":"Verify native field coordinates with ordinary movement","actions":[action],"review":False}
+    return None

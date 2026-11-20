@@ -19,13 +19,13 @@ from pathlib import Path
 from core.live import Live, LiveError
 from core.gameplay import TYPES, clean_observation, policy, remember, memory_context
 from core.rom_catalog import try_catalog
-from core.jj_fast import Adapter, quick_dialogue, ordinary_dialogue
+from core.jj_fast import Adapter, quick_dialogue, ordinary_dialogue, SHA as JJ_SHA
 from core.jj_battle import BattleAdapter
 from core.jj_explore import Explorer
 from core.jj_menus import MenuDriver,intent_from_battle
 from core.jj_runtime import NATIVE, animation_wait, record_field, count_decision, recovery_allowed
 from core.jj_connections import observe_arrival
-from core.jj_unattended import recovery, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id
+from core.jj_unattended import recovery, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id, bootstrap
 
 BUTTONS={"A":1,"B":2,"SELECT":4,"START":8,"RIGHT":16,"LEFT":32,"UP":64,"DOWN":128,"R":256,"L":512,"WAIT":0}
 SCHEMA={"type":"object","additionalProperties":False,"required":["scene","objective","actions","review"],"properties":{
@@ -312,9 +312,12 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     route=adapter.route_action(field_before,meta)
                     if route:decision,route_expected=route;source="native_route"
                     else:meta.pop("native_route",None)
-            if decision is None and adapter.admitted and battle_before is None and not meta.get("menu_intent"):
+            if decision is None and sha==JJ_SHA and battle_before is None and not meta.get("menu_intent"):
                 decision=recovery(meta,screen,rgb,field_before,adapter.verified_field(field_before,meta))
                 if decision:source="field_recovery";meta.pop("event_goal",None);meta.pop("native_route",None)
+            if decision is None and field_before is not None and not adapter.verified_field(field_before,meta):
+                decision=bootstrap(meta,field_before,screen)
+                if decision:source="field_recovery"
             if decision is None:
                 decision=title_recovery(meta,rgb)
                 if decision:source="title_recovery"
@@ -455,8 +458,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if len(meta["history"])>=24 and len({h["after"] for h in meta["history"][-24:]})<=2:
                 # Field cycles get a bounded set of distinct alternatives before
                 # a terminal review. Do not consume a recovery attempt here.
-                from core.jj_unattended import field_hint
-                if adapter.admitted and not ordinary_dialogue(rgb) and (adapter.verified_field(field_after,meta) or field_hint(history)) and len(meta.get("recovery",{}).get("attempts",[]))<8 and source!="field_recovery":
+                if sha==JJ_SHA and recovery(copy.deepcopy(meta),digest(rgb),rgb,field_after,adapter.verified_field(field_after,meta)) is not None:
                     continue
                 meta["review"]={"scene":decision["scene"],"objective":decision["objective"],"reason":"repeated screen cycle; alternative action required"}
                 save_progress(path,identity,meta,state,rgb)

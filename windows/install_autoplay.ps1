@@ -17,7 +17,7 @@ $files = @(
     'vendor/pokemon_agent/pathfinding.py','vendor/pokemon_agent/LICENSE','vendor/pokemon_agent/README.md',
     'windows/host.py','windows/local_state.py','windows/queue_host.py','windows/autoplay.py','windows/dashboard.py',
     'tests/test_autoplay.py','tests/test_gameplay.py','tests/test_redundancy.py','tests/test_dashboard.py','tests/test_rom_catalog.py','tests/test_jj_fast.py','tests/test_jj_battle.py','tests/test_jj_explore.py','tests/test_jj_menus.py','tests/test_jj_runtime.py','tests/test_jj_connections.py','tests/test_jj_unattended.py',
-    'docs/CONTINUOUS_AUTOPLAY.md','docs/POKEMON_GAMEPLAY_AGENT.md','docs/CONSOLIDATED_PLAYER.md','docs/JJ_FAST_GAMEPLAY.md','docs/JJ_NATIVE_BATTLE.md','docs/JJ_EXPLORATION.md','docs/JJ_MENU_DRIVER.md','docs/JJ_RUNTIME_METRICS.md','docs/JJ_CONNECTIONS.md'
+    'docs/CONTINUOUS_AUTOPLAY.md','docs/POKEMON_GAMEPLAY_AGENT.md','docs/CONSOLIDATED_PLAYER.md','docs/JJ_FAST_GAMEPLAY.md','docs/JJ_NATIVE_BATTLE.md','docs/JJ_EXPLORATION.md','docs/JJ_MENU_DRIVER.md','docs/JJ_RUNTIME_METRICS.md','docs/JJ_CONNECTIONS.md','docs/JJ_UNATTENDED.md'
 )
 $base = "https://raw.githubusercontent.com/xbaconator9000x/EXPERIMENTAL-ROM-TESTING-ENVIRONMENT/$Commit"
 $stage = Join-Path $env:TEMP ("rom-player-" + [Guid]::NewGuid().ToString('N'))
