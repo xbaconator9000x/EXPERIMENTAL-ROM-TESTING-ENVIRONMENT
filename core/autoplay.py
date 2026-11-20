@@ -358,10 +358,10 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if source.startswith("vision") and not decision["review"] and adapter.start_route(field_before,meta,decision.get("field_target")):
                 route=adapter.route_action(field_before,meta)
                 if route:decision,route_expected=route;source="native_route"
-            planned=policy(obs,goal,history,screen) if not decision["review"] and source not in ("remote_guidance","native_route","fast_dialogue","native_battle","native_explore","native_menu","native_battle_wait") else None
+            planned=policy(obs,goal,history,screen) if not decision["review"] and source not in ("remote_guidance","native_route","fast_dialogue","native_battle","native_explore","native_menu","native_battle_wait","field_recovery") else None
             if planned and planned[0]:
                 decision={**decision,"actions":planned[0],"objective":planned[1][:240]};source="pokemon_policy"
-            actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route","native_explore","native_menu","native_battle_wait") else choose(decision,history,screen)
+            actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route","native_explore","native_menu","native_battle_wait","field_recovery") else choose(decision,history,screen)
             if actions and quarantined(meta,screen,actions):
                 actions=alternative(meta,screen,field_before,history) or []
                 if actions:source="field_recovery";event_command=None;route_expected=None;menu_signature=None;battle_signature=None

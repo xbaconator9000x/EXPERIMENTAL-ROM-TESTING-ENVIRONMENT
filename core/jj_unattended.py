@@ -38,7 +38,7 @@ def recovery(meta,screen,rgb,candidate=None,verified=False):
         record.update(attempts=[],screens=loop)
     else:record["screens"]=sorted(set(record["screens"]+loop))[-16:]
     if len(record["attempts"])>=8:return None
-    recent=[a["button"] for x in history[-12:] if x.get("before")==screen for a in x.get("actions",[])]
+    recent=[a["button"] for x in history[-12:] if x.get("before") in loop for a in x.get("actions",[])]
     tried={a["button"] for a in record["attempts"]}
     directions=list(DIR)
     if candidate:

@@ -11,7 +11,10 @@ class Tests(unittest.TestCase):
         rgb=bytes(115200)
         first=recovery(m,"a",rgb)
         self.assertIn(first["actions"][0]["button"],("LEFT","RIGHT"))
-        for i in range(7):self.assertIsNotNone(recovery(m,"a",rgb))
+        second=recovery(m,"b",rgb)
+        self.assertIn(second["actions"][0]["button"],("LEFT","RIGHT"))
+        self.assertNotEqual(first["actions"][0]["button"],second["actions"][0]["button"])
+        for i in range(6):self.assertIsNotNone(recovery(m,"a",rgb))
         self.assertIsNone(recovery(m,"a",rgb))
     def test_menu_not_blindly_pressed(self):
         h=history();h[-1]["observed_stage"]="menu"
