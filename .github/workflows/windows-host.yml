@@ -1,0 +1,49 @@
+name: Native Windows ROM testing host
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'windows/**'
+      - 'core/state_runner.c'
+      - 'core/live_runner.c'
+      - 'core/run_locked.py'
+      - '.github/workflows/windows-host.yml'
+permissions:
+  contents: read
+jobs:
+  windows-native:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-mgba
+      - name: Compile Windows native mGBA adapters
+        shell: msys2 {0}
+        run: |
+          mkdir -p build
+          gcc -std=gnu11 -O2 -Wall -Wextra core/state_runner.c -o build/state_runner.exe -lmgba
+          gcc -std=gnu11 -O2 -Wall -Wextra core/live_runner.c -o build/live_runner.exe -lmgba
+      - name: Python host and harness tests
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -p "test_*.py" -v
+      - name: Synthetic native emulator input acceptance
+        shell: msys2 {0}
+        run: |
+          python tests/make_gba_fixture.py --output build/synthetic.gba
+          python -m core.run_locked --runner build/state_runner.exe --rom build/synthetic.gba --sha256 "$(sha256sum build/synthetic.gba | cut -d' ' -f1)" --scenario tests/scenarios/input-pass.txt --out build/windows-evidence
+          test -f build/windows-evidence/frame_*.ppm
+      - name: No private game data in published CI
+        shell: pwsh
+        run: |
+          Write-Host "Synthetic ROM only; no proprietary games, saves or screenshots uploaded."
