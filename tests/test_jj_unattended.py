@@ -1,0 +1,35 @@
+import unittest
+from core.jj_unattended import cycle,recovery,quarantine,quarantined,quest_state,replay
+from core.live import LiveError
+
+def history():
+    return [{"before":"a" if i%2==0 else "b","after":"b" if i%2==0 else "a","scene":"hospital_room","actions":[{"button":"UP" if i%2==0 else "DOWN","frames":16}]} for i in range(12)]
+class Tests(unittest.TestCase):
+    def test_recovery_escapes_loop_and_caps(self):
+        m={"history":history()}
+        self.assertEqual(cycle(m["history"],"a"),["a","b"])
+        rgb=bytes(115200)
+        first=recovery(m,"a",rgb)
+        self.assertIn(first["actions"][0]["button"],("LEFT","RIGHT"))
+        for i in range(7):self.assertIsNotNone(recovery(m,"a",rgb))
+        self.assertIsNone(recovery(m,"a",rgb))
+    def test_menu_not_blindly_pressed(self):
+        h=history();h[-1]["observed_stage"]="menu"
+        self.assertIsNone(recovery({"history":h},"a",bytes(115200)))
+    def test_quarantine_exact_input(self):
+        m={};a=[{"button":"A","frames":5}];quarantine(m,"a",a)
+        self.assertTrue(quarantined(m,"a",a));self.assertFalse(quarantined(m,"b",a))
+    def test_objective_verified_party(self):
+        m={};q=quest_state(m,None,None,{"fact":"meet Jessie"},"find exit")
+        self.assertEqual(q["phase"],"obtain_initial_party")
+        quest_state(m,None,[{"hp":10,"max_hp":10}])
+        self.assertEqual(q["phase"],"explore_and_advance_story")
+        quest_state(m,None,[{"hp":1,"max_hp":10}])
+        self.assertEqual(q["phase"],"restore_party_health")
+    def test_replay_classifies_failure(self):
+        class Live:
+            def step(self,*a):raise LiveError("transport")
+            def close(self):pass
+        self.assertEqual(replay(lambda s:Live(),b"x",[{"button":"A","frames":5}],24,{"A":1})[0],"REPLAY_FAILED")
+        def broken(s):raise LiveError("setup")
+        self.assertEqual(replay(broken,b"x",[],24,{})[0],"REPLAY_SETUP_FAILED")
