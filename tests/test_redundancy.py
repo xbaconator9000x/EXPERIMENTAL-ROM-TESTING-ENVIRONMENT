@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from core.guidance import PREFIX, parse_guide, newest_guide, claim_guide
 from core.gameplay import clean_observation, item_policy
-from core.autoplay import OllamaVision
+from core.autoplay import OllamaVision, settle_frames
 
 class RedundancyTests(unittest.TestCase):
     def test_state_locked_guide(self):
@@ -44,3 +44,10 @@ class RedundancyTests(unittest.TestCase):
             self.assertTrue(claim_guide(p,4,h,v,True))
             self.assertFalse(claim_guide(p,4,h,v))
             self.assertTrue(claim_guide(p,5,h,v))
+
+    def test_context_settling_and_remote_input_timing(self):
+        d={"scene":"battle_mode_selection","actions":[{"button":"A","frames":5}]}
+        self.assertEqual(settle_frames(d,"vision"),120)
+        self.assertEqual(settle_frames(d,"remote_guidance"),24)
+        self.assertEqual(settle_frames({"scene":"field","observation":{"stage":"field"}},"pokemon_policy"),24)
+        self.assertEqual(settle_frames({"scene":"dialogue"},"vision"),150)

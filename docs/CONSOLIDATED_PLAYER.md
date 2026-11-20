@@ -42,3 +42,5 @@ No ROM data is exported. Source references:
 https://github.com/pret/pokefirered/blob/master/include/pokemon.h
 https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_3rd_Generation
 https://bulbapedia.bulbagarden.net/wiki/Move_data_structure_in_Generation_III
+
+Context-sensitive idle settling lets animations and dialogue finish before the next vision inference. Actual settle timing is recorded in the action journal. Remote exact-state guidance retains fixed 24-frame settling. Compact observations retain scene and quest facts; rich planning is periodic or context-triggered. This optimizes inference count, not a measured speed guarantee.
