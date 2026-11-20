@@ -10,8 +10,11 @@ import os
 import struct
 import time
 from pathlib import Path
-import tkinter as tk
-from tkinter import ttk
+try:
+    import tkinter as tk
+    from tkinter import ttk
+except ImportError:
+    tk=ttk=None
 
 MAGIC=b"GBA-AUTOPLAY-1\n"
 MAX_SIZE=2*1024*1024+512*1024
@@ -167,6 +170,7 @@ class Dashboard:
             self.metrics["age"].configure(text=pretty_age(age))
             end=terminal(self.selected)
             if end:self.status(end.replace("_"," "),"#92400e" if end!="EMULATOR_ERROR" else "#991b1b")
+            elif meta.get("model_error"):self.status("MODEL RETRY: "+str(meta["model_error"]),"#92400e")
             elif meta.get("review"):self.status("REVIEW REQUESTED","#92400e")
             elif age>180:self.status("NO RECENT CHECKPOINT","#92400e")
             elif meta["decisions"]==0:self.status("FIRST DECISION PENDING","#1d4ed8")
@@ -182,6 +186,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument("--queue");p.add_argument("--goal-id")
     a=p.parse_args()
     if a.goal_id and not a.goal_id.isdecimal():p.error("Goal ID must be numeric")
+    if tk is None:raise SystemExit("Tkinter required for dashboard GUI")
     root=tk.Tk();Dashboard(root,a.queue,a.goal_id);root.mainloop()
 
 if __name__=="__main__":main()

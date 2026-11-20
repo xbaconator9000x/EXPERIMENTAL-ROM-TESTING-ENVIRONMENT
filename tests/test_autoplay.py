@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from core.autoplay import parse_decision, choose, png, save_progress, load_progress, play
+from core.autoplay import parse_decision, choose, png, save_progress, load_progress, play, title_recovery, model_error
 from windows.autoplay import goal
 
 def decision(button="A"):
@@ -57,3 +57,15 @@ class AutoTests(unittest.TestCase):
             self.assertEqual(load_progress(p,{"id":1})[1],b"a")
             p.write_bytes(p.read_bytes()[:-1]+b"x")
             with self.assertRaises(ValueError):load_progress(p,{"id":1})
+
+    def test_title_recovery_animated_screen(self):
+        h=[{"scene":"title_screen","actions":[{"button":"A","frames":16}],"before":"a","after":"b"},
+           {"scene":"title_screen","actions":[{"button":"A","frames":16}],"before":"b","after":"c"}]
+        wait=title_recovery({"history":h,"frames":280})
+        self.assertTrue(all(a["button"]=="WAIT" for a in wait["actions"]))
+        self.assertEqual(title_recovery({"history":h,"frames":900})["actions"][0]["button"],"START")
+        self.assertIsNone(title_recovery({"history":[h[0],{**h[1],"scene":"battle"}],"frames":900}))
+        self.assertIsNone(title_recovery({"history":[h[0],{**h[1],"actions":[{"button":"START","frames":6}]}],"frames":900}))
+    def test_model_error_enum(self):
+        self.assertEqual(model_error(TimeoutError("private path")),"LOCAL_TIMEOUT")
+        self.assertEqual(model_error(ValueError("private content")),"INVALID_DECISION_SCHEMA")

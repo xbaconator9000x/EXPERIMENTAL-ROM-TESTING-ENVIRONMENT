@@ -44,7 +44,7 @@ def post(remote,number,status,meta,rgb):
     # Only a fixed, bounded screenshot and recent decisions. No states, ROM or files.
     remote.verify()
     payload={"status":status,"decisions":meta["decisions"],"frames":meta["frames"],
-             "history":meta.get("history",[])[-4:],"review":meta.get("review"),"failed_action":meta.get("failed_action")}
+             "history":meta.get("history",[])[-4:],"review":meta.get("review"),"failed_action":meta.get("failed_action"),"model_error":meta.get("model_error")}
     remote.request("/issues/"+str(number)+"/comments",{"body":"ROM-AUTOPLAY v1\n"+json.dumps(payload,ensure_ascii=True,separators=(",",":"))})
     data=png(rgb);encoded=base64.b64encode(data).decode("ascii");parts=(len(encoded)+43999)//44000
     for i in range(parts):
@@ -86,7 +86,9 @@ def main():
                         return current.get("state")!="open" or current.get("body")!=original or current.get("title")!=TITLE
                     def report(status,meta,rgb):
                         print(f"#{number}: {status}, decisions={meta['decisions']}, frames={meta['frames']}",flush=True)
-                        post(remote,number,status,meta,rgb)
+                        try:post(remote,number,status,meta,rgb)
+                        except (OSError,ValueError,KeyError):
+                            print("Private progress report failed; local checkpoint retained.",flush=True)
                     status,meta,rgb=play(RUNNER,rom,job["sha256"],job["goal"],folder,model,should_stop=stop,report=report)
                     if status!="STOPPED":
                         if status not in ("NEEDS_REVIEW","EMULATOR_ERROR","MODEL_UNAVAILABLE_OR_INVALID"):report(status,meta,rgb)
