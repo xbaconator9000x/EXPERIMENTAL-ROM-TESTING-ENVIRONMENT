@@ -7,8 +7,9 @@ Reusable, deterministic GBA gameplay regression tools built on libmGBA. The firs
 The [Windows host](windows/README.md) is a native Python/Tkinter desktop
 control panel backed by Windows-compiled libmGBA. It imports owned ROMs
 into a private SHA-256-addressed local library, runs selected local scenarios,
-keeps evidence on the PC, and needs no WSL. The optional private GitHub
-remote queue and startup service are **not yet implemented**. The Windows
+keeps evidence on the PC, and needs no WSL. An optional outbound-only private GitHub issue queue accepts bounded,
+hash-locked scenarios; it does not execute remote code. Automatic startup
+and remotely dispatched adaptive gameplay are not yet implemented. The Windows
 workflow verifies the native engine against an authored synthetic cartridge.
 
 ## Layout
