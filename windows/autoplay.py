@@ -46,7 +46,7 @@ def poll_goals(remote):
 def post(remote,number,status,meta,rgb):
     # Only a fixed, bounded screenshot and recent decisions. No states, ROM or files.
     remote.verify()
-    payload={"status":status,"decisions":meta["decisions"],"frames":meta["frames"],
+    payload={"status":status,"decisions":meta["decisions"],"frames":meta["frames"],"rom_profile":meta.get("rom_profile"),"native_acceptance":meta.get("native_acceptance"),
              "screen":hashlib.sha256(rgb).hexdigest(),"history":meta.get("history",[])[-4:],"review":meta.get("review"),"failed_action":meta.get("failed_action"),"model_error":meta.get("model_error"),"engine_metrics":meta.get("engine_metrics"),"native_field":meta.get("last_native_field"),"native_transitions":len(meta.get("observed_field_transitions",[])),"native_diagnostics":meta.get("native_diagnostics"),"objective_state":meta.get("objective_state"),"last_incident":meta.get("last_incident"),"recovery_attempts":len(meta.get("recovery",{}).get("attempts",[]))}
     remote.request("/issues/"+str(number)+"/comments",{"body":"ROM-AUTOPLAY v1\n"+json.dumps(payload,ensure_ascii=True,separators=(",",":"))})
     data=png(rgb);encoded=base64.b64encode(data).decode("ascii");parts=(len(encoded)+43999)//44000

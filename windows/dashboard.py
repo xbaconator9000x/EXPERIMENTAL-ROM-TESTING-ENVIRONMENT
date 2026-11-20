@@ -166,6 +166,7 @@ class Dashboard:
                 stats=meta.get("engine_metrics",{})
                 suffix=f" | Native {stats.get('native',0)} | Model calls {stats.get('model_calls',0)}" if stats else ""
                 diag=meta.get("native_diagnostics",{})
+                if meta.get("native_acceptance"):suffix+=" | "+str(meta["native_acceptance"].get("status",""))
                 if diag:suffix+=f" | Field: {'active' if diag.get('field_verified') else diag.get('field_reason','pending')}"
                 self.model.configure(text=("Model: "+str(identity.get("model","—"))+suffix)[:240])
                 self.history.configure(state="normal");self.history.delete("1.0","end")

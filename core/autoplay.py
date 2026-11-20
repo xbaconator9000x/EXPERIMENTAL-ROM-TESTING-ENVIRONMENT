@@ -22,6 +22,7 @@ from core.rom_catalog import try_catalog
 from core.jj_fast import Adapter, quick_dialogue, ordinary_dialogue, SHA as JJ_SHA
 from core.jj_battle import BattleAdapter
 from core.gen3_profiles import open_profile, VanillaField, VanillaBattle
+from core.native_acceptance import Acceptance
 from core.jj_explore import Explorer
 from core.jj_menus import MenuDriver,intent_from_battle
 from core.jj_runtime import NATIVE, animation_wait, record_field, count_decision, recovery_allowed
@@ -247,6 +248,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
         adapter=VanillaField(vanilla,sha)
         battles=VanillaBattle(vanilla,sha,catalog)
     meta["rom_profile"]=vanilla.name if vanilla else ("Jessie & James exact profile" if sha==JJ_SHA else "vision-only")
+    acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
     explorer=Explorer(adapter)
     menus=MenuDriver(rom,sha,battles)
     live=None
@@ -259,6 +261,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
         except BaseException:inst.close();raise
     try:
         live=open_live(state if prior else None)
+        if prior:acceptance.reload(meta["decisions"],rgb,live.rgb())
         if not prior:
             rgb=live.rgb();meta["frames"]=120
             state=live.save_state()
@@ -379,8 +382,11 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             # Segment the native 200k-frame guard without losing game state.
             settle=150 if source=="fast_dialogue" else (150 if event_command and event_command[0] in ("interact","cross") else 16) if source in ("native_route","native_explore") else settle_frames(decision,source)
             cost=sum(a["frames"]+settle for a in actions)
+            witness_before=acceptance.witness(live,field_before,battle_before)
             if session_frames+cost>180000:
                 state=live.save_state();live.close();live=open_live(state);session_frames=0
+                acceptance.reload(meta["decisions"],rgb,live.rgb())
+                adapter.attach(live)
             try:
                 for action in actions:
                     live.step(BUTTONS[action["button"]],action["frames"])
@@ -433,6 +439,8 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if source=="native_route":
                 if not field_after or not field_before or field_after[0].map_id!=field_before[0].map_id or field_after[0].pos!=route_expected:meta.pop("native_route",None)
                 elif meta.get("native_route"):meta["native_route"]["remaining"]-=1
+            witness_after=acceptance.witness(live,field_after,battles.snapshot(live))
+            acceptance.observe(witness_before,witness_after,source,meta["decisions"]+1,screen,digest(after),actions)
             meta["decisions"]+=1;meta["frames"]+=cost;session_frames+=cost
             entry={"decision":meta["decisions"],"before":screen,"after":digest(after),"actions":actions,"scene":decision["scene"],"objective":decision["objective"],"source":source,"settle_frames":settle}
             # Keep recent decision history in the atomic checkpoint; append full audit locally.
