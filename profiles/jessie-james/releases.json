@@ -1,0 +1,19 @@
+{
+  "game": "Pokémon Team Rocket: Jessie & James Edition",
+  "size": 16777216,
+  "builds": [
+    {
+      "version": "English v1.0",
+      "crc32": "C043455C",
+      "sha256": "a69cd2306ae494d4db0e16772d007438d425dd43cd5287757a5e04035551da4a"
+    },
+    {
+      "version": "English v1.01",
+      "crc32": "A3E3CC2F",
+      "sha256": "06d9c87234400f45f1fc3a356881f0ad8bd9b977bc5cbed450e5c7eedd01b632"
+    }
+  ],
+  "stateMapping": "unverified",
+  "gameplayAcceptance": "not_tested",
+  "source": "https://github.com/xbaconator9000x/Unofficial-Jessie-James-Edition-English-Translation"
+}

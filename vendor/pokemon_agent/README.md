@@ -1,0 +1,1 @@
+Unmodified navigation module from [pokemon-agent](https://github.com/haggyroth/pokemon-agent/blob/2cbc8bf796b7618c00e883ef468fd64a578e3ac8/game/pathfinding.py), pinned to commit `2cbc8bf796b7618c00e883ef468fd64a578e3ac8`. MIT licence retained. No ROM-derived data included.

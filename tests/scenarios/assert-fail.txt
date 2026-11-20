@@ -1,0 +1,2 @@
+wait 32 0x02000000 0xffffffff 1 240
+assert 32 0x02000000 0xffffffff 2

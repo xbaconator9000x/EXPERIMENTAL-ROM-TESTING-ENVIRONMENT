@@ -1,0 +1,8 @@
+# Homebrew test: prove normal controller input changes actual emulated RAM.
+wait 16 0x06012bfe 0x7fff 0x7fff 240
+wait 32 0x02000000 0xffffffff 1 60
+press A 2
+assert 32 0x02000000 0xffffffff 0
+idle 2
+assert 32 0x02000000 0xffffffff 1
+capture
