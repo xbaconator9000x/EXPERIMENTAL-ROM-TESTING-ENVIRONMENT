@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p build evidence
-cc -std=c11 -O2 -Wall -Wextra core/state_runner.c -o build/state_runner -lmgba
+cc -std=gnu11 -O2 -Wall -Wextra core/state_runner.c -o build/state_runner -lmgba
 python3 -m unittest discover -s tests -v
 python3 tests/make_gba_fixture.py --output build/synthetic.gba
 sha="$(sha256sum build/synthetic.gba | cut -d' ' -f1)"
@@ -23,6 +23,6 @@ if python3 core/run_locked.py --runner build/state_runner --rom build/synthetic.
 fi
 echo 'PASS: synthetic native input and assertion regressions, not actual game acceptance'
 
-cc -std=c11 -O2 -Wall -Wextra core/live_runner.c -o build/live_runner -lmgba
+cc -std=gnu11 -O2 -Wall -Wextra core/live_runner.c -o build/live_runner -lmgba
 clang --target=arm-none-eabi -mcpu=arm7tdmi -fuse-ld=lld -nostdlib -Wl,-Ttext=0x080000c0,--oformat=binary tests/field_fixture.s -o build/field.bin
 python3 tests/native_walk.py | tee evidence/native-walk.log
