@@ -80,7 +80,7 @@ class Catalog:
             name=name_key(read_name(rom,MOVE_NAMES,13,i));row=move_row(rom,i)
             if name and row:
                 self.moves[name]=row if name not in self.moves else None
-                self.move_ids[i]=dict(row,name=name)
+                self.move_ids[i]=dict(row,name=name,effect=rom[MOVE_DATA+i*12])
 
     def enrich(self,obs):
         if obs.get("stage") not in ("battle_command","battle_moves","bag","party"):return obs

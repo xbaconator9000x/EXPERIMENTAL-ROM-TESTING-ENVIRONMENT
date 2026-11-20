@@ -7,6 +7,7 @@ execute through ordinary inputs. The local model only chooses a skill.
 import argparse
 import base64
 import json
+import time
 from pathlib import Path
 import urllib.request
 from core.autoplay import digest,png,save_progress,load_progress,NoRedirect
@@ -53,7 +54,15 @@ def campaign(runner,rom,sha,checkout,folder,model,goal,max_decisions,should_stop
                 live.close();live=Live(runner,rom,sha);live.load_state(state)
                 session.transport.live=live;segment_frames=0
             observed=session.observe()
-            name,args=choose_skill(model,goal,observed,meta["history"],rgb)
+            turn=time.perf_counter()
+            try:
+                name,args=choose_skill(model,goal,observed,meta["history"],rgb)
+            except (OSError,ValueError,KeyError,TypeError) as exc:
+                meta["model_error"]=type(exc).__name__
+                save_progress(path,identity,meta,state,rgb)
+                report("MODEL_UNAVAILABLE_OR_INVALID",meta,rgb)
+                return "MODEL_UNAVAILABLE_OR_INVALID",meta,rgb
+            meta.pop("model_error",None)
             try:
                 result=session.execute(name,args)
                 after=live.rgb();next_state=live.save_state()
@@ -63,7 +72,8 @@ def campaign(runner,rom,sha,checkout,folder,model,goal,max_decisions,should_stop
                 report("EMULATOR_ERROR",meta,rgb);return "EMULATOR_ERROR",meta,rgb
             frames=session.transport.frames
             entry={"decision":meta["decisions"]+1,"before":digest(rgb),"after":digest(after),
-                   "skill":name,"args":args,"result":result,"frames":frames,"source":"upstream_skill"}
+                   "skill":name,"args":args,"result":result,"frames":frames,"source":"upstream_skill",
+                   "scene":observed["context"],"objective":result[:240],"elapsed_seconds":round(time.perf_counter()-turn,3)}
             meta["decisions"]+=1;meta["frames"]+=frames;segment_frames+=frames
             meta["history"]=(meta["history"]+[entry])[-20:]
             # Capture actual controller masks and frame counts, not just the
@@ -73,9 +83,11 @@ def campaign(runner,rom,sha,checkout,folder,model,goal,max_decisions,should_stop
             state,rgb=next_state,after
             save_progress(path,identity,meta,state,rgb)
             (folder/"upstream-latest.png").write_bytes(png(rgb))
-            report("RUNNING",meta,rgb)
+            if meta["decisions"]==1 or meta["decisions"]%5==0:report("RUNNING",meta,rgb)
             recent=meta["history"][-8:]
             if len(recent)==8 and all(h["before"]==h["after"] for h in recent):
+                meta["review"]={"reason":"upstream skill stalled across eight unchanged decisions"}
+                save_progress(path,identity,meta,state,rgb)
                 report("NEEDS_REVIEW",meta,rgb);return "NEEDS_REVIEW",meta,rgb
         status="STOPPED" if should_stop() else "BUDGET_REACHED"
         report(status,meta,rgb);return status,meta,rgb

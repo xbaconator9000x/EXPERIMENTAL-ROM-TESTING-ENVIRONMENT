@@ -14,9 +14,10 @@ from windows.host import ROOT, LIBRARY, REPO, fingerprint
 from windows.queue_host import Remote
 
 TITLE="[ROM-PLAY v1]"
+UPSTREAM_TITLE="[ROM-PLAY upstream v2]"
 RUNNER=REPO/"build"/"live_runner.exe"
 
-def goal(body):
+def goal(body, title=TITLE):
     if not isinstance(body,str) or len(body)>4096:raise ValueError("Invalid playthrough goal")
     def unique(pairs):
         d={}
@@ -25,7 +26,8 @@ def goal(body):
             d[k]=v
         return d
     v=json.loads(body,object_pairs_hook=unique)
-    if type(v) is not dict or set(v)!={"version","sha256","goal"} or type(v["version"]) is not int or v["version"]!=1:
+    version=2 if title==UPSTREAM_TITLE else 1
+    if type(v) is not dict or set(v)!={"version","sha256","goal"} or type(v["version"]) is not int or v["version"]!=version:
         raise ValueError("Invalid goal schema")
     if type(v["sha256"]) is not str or not re.fullmatch(r"[a-f0-9]{64}",v["sha256"]):raise ValueError("Invalid ROM hash")
     if type(v["goal"]) is not str or not 1<=len(v["goal"].strip())<=1000 or any(ord(c)<32 for c in v["goal"]):raise ValueError("Invalid goal text")
@@ -36,7 +38,7 @@ def poll_goals(remote):
     for page in range(1,11):
         rows=remote.request("/issues?state=open&sort=created&direction=asc&per_page=100&page="+str(page))
         for i in rows:
-            if ("pull_request" not in i and i.get("title")==TITLE and i.get("user",{}).get("login","").lower()==remote.author and
+            if ("pull_request" not in i and i.get("title") in (TITLE,UPSTREAM_TITLE) and i.get("user",{}).get("login","").lower()==remote.author and
                     type(i.get("id")) is int and i["id"]>0 and type(i.get("number")) is int and i["number"]>0):
                 yield i
         if len(rows)<100:return
@@ -56,6 +58,7 @@ def post(remote,number,status,meta,rgb):
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--queue",required=True);p.add_argument("--author",required=True);p.add_argument("--model",default="qwen3-vl:4b-instruct");p.add_argument("--fallback",default="qwen3-vl:2b-instruct")
+    p.add_argument("--upstream-checkout",type=Path,help="Enable exact vanilla LeafGreen upstream v2 jobs")
     a=p.parse_args()
     if not RUNNER.is_file():raise SystemExit("Rebuild native runners first.")
     remote=Remote(a.queue,a.author,getpass.getpass("Private issue token: "),share_evidence=True)
@@ -73,22 +76,26 @@ def main():
             try:
                 for issue in poll_goals(remote):
                     number=issue["number"];folder=root/str(issue["id"]);folder.mkdir(exist_ok=True)
+                    upstream=issue["title"]==UPSTREAM_TITLE
+                    if upstream and not a.upstream_checkout:continue
                     done=folder/"terminal.json"
                     if done.is_file():
                         try:finished=json.loads(done.read_text(encoding="utf-8"))
                         except (ValueError,OSError):continue
-                        if finished.get("status") not in ("NEEDS_REVIEW","EMULATOR_ERROR"):continue
-                    try:job=goal(issue.get("body"))
+                        if upstream or finished.get("status") not in ("NEEDS_REVIEW","EMULATOR_ERROR"):continue
+                    try:job=goal(issue.get("body"),issue["title"])
                     except ValueError:continue
                     rom=LIBRARY/(job["sha256"]+".gba")
                     if not rom.is_file() or rom.is_symlink() or fingerprint(rom)!=job["sha256"]:
                         print("ROM not registered for issue #"+str(number),flush=True);continue
-                    last=[0.0];original=issue["body"]
+                    if upstream and (folder/"progress.bin").exists():continue
+                    if not upstream and (folder/"upstream-progress.bin").exists():continue
+                    last=[0.0];original=issue["body"];original_title=issue["title"]
                     def stop():
                         if time.monotonic()-last[0]<30:return False
                         last[0]=time.monotonic();remote.verify()
                         current=remote.request("/issues/"+str(number))
-                        return current.get("state")!="open" or current.get("body")!=original or current.get("title")!=TITLE
+                        return current.get("state")!="open" or current.get("body")!=original or current.get("title")!=original_title
                     guide_rows={"time":0.0,"rows":[]}
                     def guidance(meta,screen,consume=False):
                         if time.monotonic()-guide_rows["time"]>30:
@@ -130,7 +137,15 @@ def main():
                         try:post(remote,number,status,meta,rgb)
                         except (OSError,ValueError,KeyError):
                             print("Private progress report failed; local checkpoint retained.",flush=True)
-                    status,meta,rgb=play(RUNNER,rom,job["sha256"],job["goal"],folder,model,should_stop=stop,report=report,guidance=checked_guide)
+                    if upstream:
+                        from core.upstream_campaign import campaign
+                        from core.upstream_port import PortError
+                        try:
+                            status,meta,rgb=campaign(RUNNER,rom,job["sha256"],a.upstream_checkout,folder,a.model,job["goal"],100000,should_stop=stop,report=report)
+                        except PortError as exc:
+                            print("Upstream profile rejected: "+str(exc),flush=True);continue
+                    else:
+                        status,meta,rgb=play(RUNNER,rom,job["sha256"],job["goal"],folder,model,should_stop=stop,report=report,guidance=checked_guide)
                     if status!="STOPPED":
                         if status not in ("NEEDS_REVIEW","EMULATOR_ERROR","MODEL_UNAVAILABLE_OR_INVALID"):report(status,meta,rgb)
                         if status!="MODEL_UNAVAILABLE_OR_INVALID":

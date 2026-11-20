@@ -73,6 +73,7 @@ def pretty_age(value):
     return f"{value//3600}h {(value%3600)//60:02d}m"
 
 def action_text(row):
+    if row.get("source")=="upstream_skill":return str(row.get("skill","skill"))[:80]+f" ({row.get('frames',0)}f)"
     actions=row.get("actions",[])
     return "  /  ".join(f"{a.get('button','?')} {a.get('frames','?')}f" for a in actions if isinstance(a,dict)) or "—"
 
@@ -140,6 +141,7 @@ class Dashboard:
                 self.footer.configure(text="No goal folder yet. Check the continuous player PowerShell window.")
                 return
             p=self.selected/"progress.bin"
+            if not p.is_file():p=self.selected/"upstream-progress.bin"
             if not p.is_file():
                 self.status("WAITING FOR CHECKPOINT")
                 self.footer.configure(text="Goal found, but the emulator has not saved its first checkpoint.")

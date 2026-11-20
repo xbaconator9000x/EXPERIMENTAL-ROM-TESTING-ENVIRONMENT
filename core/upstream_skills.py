@@ -202,15 +202,20 @@ class SkillSession:
         checkout=verified_checkout(checkout)
         # This entry point runs in the harness process, which must not already
         # have a different top-level upstream package loaded.
-        if any(k.split(".")[0] in ("agent","game","knowledge","memory","config") for k in sys.modules):
-            raise PortError("upstream package namespace is already occupied")
+        for key,module in list(sys.modules.items()):
+            if key.split(".")[0] not in ("agent","game","knowledge","memory","config"):continue
+            origin=getattr(module,"__file__",None)
+            if origin and not Path(origin).resolve().is_relative_to(checkout):
+                raise PortError("upstream package namespace is already occupied")
+            if not origin and any(not Path(p).resolve().is_relative_to(checkout) for p in getattr(module,"__path__",[])):
+                raise PortError("upstream namespace is already occupied")
         if not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,100}",model):
             raise PortError("invalid local model")
         folder=Path(folder).resolve();folder.mkdir(parents=True,exist_ok=True)
         os.environ.update(LLM_BASE_URL="http://127.0.0.1:11434/v1",LLM_API_KEY="ollama",
                           MODEL_NAME=model,BATTLE_STYLE="",USE_VISION="false",SHOW_WINDOW="false",
                           SCREENSHOT_PATH=str(folder/"upstream-frame.png"))
-        sys.path.insert(0,str(checkout))
+        if str(checkout) not in sys.path:sys.path.insert(0,str(checkout))
         from agent.lm_studio_client import AgentClient
         from game.memory_reader import LeafGreenReader
         from memory.long_term import LongTermMemory
