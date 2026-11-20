@@ -1,6 +1,9 @@
 """Outbound-only private GitHub queue. Remote data is never executed as code."""
 from __future__ import annotations
+import base64
 import hashlib
+import struct
+import zlib
 import json
 import os
 from pathlib import Path
@@ -75,14 +78,15 @@ def validate(body):
     if not checks or frames>200000 or captures>20:raise ValueError("Scenario exceeds limits or lacks assertion")
     return {"version":1,"sha256":job["sha256"],"scenario":normalized}
 
-def run(job,stop,runner=RUNNER,library=LIBRARY,runs=RUNS,timeout=600):
+def run(job,stop,runner=RUNNER,library=LIBRARY,runs=RUNS,timeout=600,run_id=None):
     job=validate(json.dumps(job))
     if not runner.is_file():return "RUNNER_NOT_INSTALLED"
     sha=job["sha256"]
     source=library/(sha+".gba")
     if not source.is_file():return "ROM_NOT_REGISTERED"
     if not 0<source.stat().st_size<=32*1024*1024 or fingerprint(source)!=sha:return "ROM_HASH_MISMATCH"
-    folder=runs/("remote-"+uuid.uuid4().hex)
+    folder=runs/("remote-"+uuid.uuid4().hex if run_id is None else run_id)
+    if not re.fullmatch(r"remote-[a-f0-9]{32}",folder.name):raise ValueError("Invalid run id")
     folder.mkdir(parents=True)
     with tempfile.TemporaryDirectory(dir=folder,prefix="private-") as work:
         work=Path(work)
@@ -112,16 +116,91 @@ def run(job,stop,runner=RUNNER,library=LIBRARY,runs=RUNS,timeout=600):
             return "PASS"
         return "FAIL"
 
+
+# Evidence is opt-in locally, never requested by an issue. Fixed output paths only.
+# PNGs are reconstructed from the runner's exact P6 framebuffer format.
+FRAME = re.compile(r"frame_\d{6}_line_\d+\.ppm")
+CHUNK = 44000
+MAX_FRAMES = 21  # 20 requested captures plus the runner's terminal failure capture
+MAX_LOG = 24000
+
+def png_frame(path):
+    if path.is_symlink() or not path.is_file():raise ValueError("Not a regular capture")
+    header=b"P6\n240 160\n255\n"
+    expected=len(header)+240*160*3
+    if path.stat().st_size!=expected:raise ValueError("Invalid framebuffer length")
+    with path.open("rb") as f:raw=f.read(expected+1)
+    if len(raw)!=expected or not raw.startswith(header):raise ValueError("Invalid framebuffer")
+    rgb=raw[len(header):]
+    def chunk(kind,data):
+        return struct.pack(">I",len(data))+kind+data+struct.pack(">I",zlib.crc32(kind+data)&0xffffffff)
+    # PNG Sub filter preserves every pixel and compresses repetitive GBA tiles.
+    rows=[]
+    for y in range(160):
+        row=rgb[y*720:(y+1)*720]
+        rows.append(b"\x01"+row[:3]+bytes((row[i]-row[i-3])&255 for i in range(3,720)))
+    return b"\x89PNG\r\n\x1a\n"+chunk(b"IHDR",struct.pack(">IIBBBBB",240,160,8,2,0,0,0))+chunk(b"IDAT",zlib.compress(b"".join(rows),9))+chunk(b"IEND",b"")
+
+def safe_log(path):
+    # Only recognized emulator diagnostic lines; no arbitrary host paths,
+    # stderr tracebacks, raw memory dumps, environment variables or save data.
+    if path.is_symlink() or not path.is_file():return ""
+    allowed=(
+        re.compile(r"INPUT line=\d+ frame=\d+ keys=-?\d+ duration=\d+"),
+        re.compile(r"(?:PASS|FAIL) line=\d+ frame=\d+ addr=[0-9a-fA-F]{8} actual=[0-9a-fA-F]{8} mask=[0-9a-fA-F]{8} expected=[0-9a-fA-F]{8}"),
+        re.compile(r"RESULT (?:PASS|FAIL) frame=\d+ checks=\d+ line=\d+ core_crash=[01]"),
+        re.compile(r"(?:GBA(?: [A-Za-z]+)*|ARM|GB): [A-Za-z0-9 ,:()_.+!?\-]{1,180}"),
+    )
+    with path.open("rb") as f:
+        head=f.read(32000)
+        f.seek(max(0,path.stat().st_size-32000))
+        tail=f.read(32000)
+    def select(raw):
+        return [line for line in raw.decode("ascii",errors="replace").splitlines()
+                if any(p.fullmatch(line) for p in allowed)]
+    first=select(head);last=select(tail)
+    if path.stat().st_size<=32000:return "\n".join(first)[:MAX_LOG]
+    return ("\n".join(first)[:MAX_LOG//2]+"\n[log excerpt; middle omitted]\n"+"\n".join(last)[-MAX_LOG//2:])
+
+def evidence_parts(folder):
+    if folder.is_symlink() or not folder.is_dir() or not re.fullmatch(r"remote-[a-f0-9]{32}",folder.name):
+        return []
+    result=[]
+    log=safe_log(folder/"native.log")
+    if log:
+        result.append(("native.log","text/plain",log.encode("ascii")))
+    captures=folder/"captures"
+    if captures.is_dir() and not captures.is_symlink():
+        frames=sorted((p for p in captures.iterdir() if FRAME.fullmatch(p.name)),
+                      key=lambda p:tuple(map(int,re.findall(r"\d+",p.name))))
+        for p in frames[:MAX_FRAMES]:
+            try:result.append((p.stem+".png","image/png",png_frame(p)))
+            except (ValueError,OSError):continue
+    parts=[]
+    for name,mime,data in result:
+        b64=base64.b64encode(data).decode("ascii")
+        digest=hashlib.sha256(data).hexdigest()
+        total=(len(b64)+CHUNK-1)//CHUNK
+        for i in range(total):
+            # A bounded text envelope, machine-readable via the existing Issues permission.
+            payload={"name":name,"mime":mime,"sha256":digest,"part":i+1,"parts":total,
+                     "base64":b64[i*CHUNK:(i+1)*CHUNK]}
+            parts.append("ROM-EVIDENCE v1\n"+json.dumps(payload,separators=(",",":")))
+    return parts
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):raise ValueError("Unexpected redirect")
 
 class Remote:
-    def __init__(self,repo,author,token):
+    def __init__(self,repo,author,token,share_evidence=False):
         if not re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9_.-]+",repo) or not re.fullmatch(r"[A-Za-z0-9-]{1,39}",author) or not token:
             raise ValueError("Invalid settings")
         self.base="https://api.github.com/repos/"+repo
         self.author=author.lower()
         self.token=token
+        self.share_evidence=bool(share_evidence)
+        self.repo_id=None
         self.opener=urllib.request.build_opener(NoRedirect)
     def request(self,path="",data=None):
         req=urllib.request.Request(self.base+path,data=None if data is None else json.dumps(data).encode(),
@@ -132,7 +211,13 @@ class Remote:
         if len(raw)>2*1024*1024:raise ValueError("Response too large")
         return json.loads(raw)
     def verify(self):
-        if self.request().get("private") is not True:raise ValueError("Queue must be private")
+        meta=self.request()
+        if meta.get("private") is not True:raise ValueError("Queue must be private")
+        if self.share_evidence:
+            ident=meta.get("id")
+            if type(ident) is not int or ident<=0:raise ValueError("Invalid queue identity")
+            if self.repo_id is None:self.repo_id=ident
+            if self.repo_id!=ident:raise ValueError("Queue identity changed")
     def pending(self):
         self.verify()
         for page in range(1,11):
@@ -148,6 +233,13 @@ class Remote:
         if type(n) is not int or n<1 or status not in STATUSES:raise ValueError("Invalid result")
         self.verify()
         self.request("/issues/"+str(n)+"/comments",{"body":"ROM Test Host v1: **"+status+"**. Detailed evidence retained locally."})
+
+    def evidence(self,n,body):
+        if not self.share_evidence:raise ValueError("Evidence sharing disabled")
+        if type(n) is not int or n<1 or not body.startswith("ROM-EVIDENCE v1\n") or len(body)>48000:
+            raise ValueError("Invalid evidence envelope")
+        self.verify()
+        self.request("/issues/"+str(n)+"/comments",{"body":body})
 
 def write_ledger(path,ledger):
     tmp=path.with_suffix(".tmp")
@@ -169,13 +261,13 @@ def poll(remote,path,stop,emit):
                     if stop.is_set():break
                     key=str(issue["id"])
                     if key not in ledger:
-                        ledger[key]={"status":"HOST_ERROR","posted":False}
+                        ledger[key]={"status":"HOST_ERROR","posted":False,"run_id":"remote-"+uuid.uuid4().hex,"evidence_next":0}
                         write_ledger(path,ledger)
                         try:job=validate(issue.get("body"))
                         except Exception:status="INVALID_JOB"
                         else:
                             emit("Running issue #"+str(issue["number"]))
-                            try:status=run(job,stop)
+                            try:status=run(job,stop,run_id=ledger[key]["run_id"])
                             except Exception:status="HOST_ERROR"
                         ledger[key]["status"]=status
                         write_ledger(path,ledger)
@@ -184,13 +276,26 @@ def poll(remote,path,stop,emit):
                         ledger[key]["posted"]=True
                         write_ledger(path,ledger)
                         emit("Issue #"+str(issue["number"])+": "+ledger[key]["status"])
+                    entry=ledger[key]
+                    if remote.share_evidence and entry.get("run_id") and not entry.get("evidence_done"):
+                        parts=evidence_parts(RUNS/entry["run_id"])
+                        for index in range(entry.get("evidence_next",0),len(parts)):
+                            if stop.is_set():break
+                            remote.evidence(issue["number"],parts[index])
+                            entry["evidence_next"]=index+1
+                            write_ledger(path,ledger)
+                            stop.wait(1.2)
+                        if entry.get("evidence_next",0)==len(parts):
+                            entry["evidence_done"]=True
+                            write_ledger(path,ledger)
+                            emit("Issue #"+str(issue["number"])+": evidence sent ("+str(len(parts))+" parts)")
             except Exception as e:
                 emit("Queue unavailable ("+type(e).__name__+"); retrying.")
             stop.wait(15)
 
 def main():
     if tk is None:raise SystemExit("Tkinter required")
-    window=tk.Tk();window.title("ROM Testing Host | Private queue");window.geometry("690x440")
+    window=tk.Tk();window.title("ROM Testing Host | Private queue");window.geometry("730x500")
     box=ttk.Frame(window,padding=18);box.pack(fill="both",expand=True)
     ttk.Label(box,text="Private remote testing queue",font=("Segoe UI",18,"bold")).pack(anchor="w")
     ttk.Label(box,text="Only bounded GBA scenarios. No incoming connections or remote code.").pack(anchor="w",pady=(0,12))
@@ -200,6 +305,9 @@ def main():
         ttk.Label(fields,text=label).grid(row=i,column=0,sticky="w",padx=(0,8),pady=4)
         ttk.Entry(fields,textvariable=var,show=show).grid(row=i,column=1,sticky="ew")
     fields.columnconfigure(1,weight=1)
+    share=tk.BooleanVar(value=False)
+    ttk.Checkbutton(box,text="Share game screenshots and bounded diagnostics in this private queue",variable=share).pack(anchor="w",pady=4)
+    ttk.Label(box,text="ROMs, saves and arbitrary files stay local. Keep the repository private.").pack(anchor="w")
     status=tk.StringVar(value="Stopped");ttk.Label(box,textvariable=status).pack(anchor="w",pady=8)
     actions=ttk.Frame(box);actions.pack(fill="x")
     log=tk.Text(box,height=9,state="disabled",wrap="word");log.pack(fill="both",expand=True,pady=8)
@@ -207,8 +315,9 @@ def main():
     def start():
         nonlocal worker
         if worker and worker.is_alive():return
-        try:remote=Remote(repo.get().strip(),author.get().strip(),token.get().strip())
+        try:remote=Remote(repo.get().strip(),author.get().strip(),token.get().strip(),share_evidence=share.get())
         except ValueError as e:messagebox.showerror("Settings",str(e));return
+        if share.get() and not messagebox.askyesno("Private evidence","Upload only test screenshots and filtered emulator diagnostics to this private GitHub issue queue? Keep the repository private."):return
         if not RUNNER.is_file():messagebox.showerror("Native runner","Build the Windows runner first.");return
         key=hashlib.sha256(repo.get().strip().lower().encode()).hexdigest()
         token.set("");stop.clear()

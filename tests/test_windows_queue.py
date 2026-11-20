@@ -1,9 +1,12 @@
+import base64
 import json
+import struct
+import zlib
 from pathlib import Path
 import tempfile
 import threading
 import unittest
-from windows.queue_host import validate, Remote, run, TITLE
+from windows.queue_host import validate, Remote, run, TITLE, evidence_parts, png_frame, safe_log
 
 def job():return {"version":1,"sha256":"0"*64,"scenario":["press A 2","assert 32 0x02000000 1 1","capture"]}
 
@@ -44,4 +47,43 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(events[-1],("/issues/5/comments",{"body":"ROM Test Host v1: **PASS**. Detailed evidence retained locally."}))
         with self.assertRaises(ValueError):q.result(5,"private path")
 
+
+class EvidenceTests(unittest.TestCase):
+    def test_strict_frame_and_no_rom_save_or_paths(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder=Path(temp)/("remote-"+"a"*32);folder.mkdir()
+            cap=folder/"captures";cap.mkdir()
+            pixels=bytes([10,20,30])*240*160
+            (cap/"frame_000001_line_2.ppm").write_bytes(b"P6\n240 160\n255\n"+pixels)
+            (cap/"frame_000002_line_2.ppm").write_bytes(b"not a frame")
+            (cap/"game.gba").write_bytes(b"PRIVATE ROM")
+            (folder/"game.sav").write_bytes(b"PRIVATE SAVE")
+            (folder/"native.log").write_text("GBA Memory: Bad memory store: 1234\nSECRET C:\\Users\\Someone\nRESULT PASS frame=1 checks=1 line=2 core_crash=0\n")
+            parts=[json.loads(p.split("\n",1)[1]) for p in evidence_parts(folder)]
+            self.assertEqual({p["name"] for p in parts},{"native.log","frame_000001_line_2.png"})
+            png=base64.b64decode("".join(p["base64"] for p in parts if p["mime"]=="image/png"))
+            self.assertTrue(png.startswith(b"\x89PNG\r\n\x1a\n"))
+            pos=8;compressed=b""
+            while pos<len(png):
+                n=struct.unpack(">I",png[pos:pos+4])[0]
+                if png[pos+4:pos+8]==b"IDAT":compressed+=png[pos+8:pos+8+n]
+                pos+=12+n
+            row=zlib.decompress(compressed)[:721]
+            self.assertEqual(row[:4],b"\x01\x0a\x14\x1e")
+            self.assertEqual(row[4:],b"\0"*717)
+            log=base64.b64decode(parts[0]["base64"])
+            self.assertNotIn(b"SECRET",log)
+            self.assertIn(b"RESULT PASS",log)
+    def test_private_and_opt_in(self):
+        q=Remote("owner/repo","owner","dummy")
+        with self.assertRaises(ValueError):q.evidence(1,"ROM-EVIDENCE v1\n{}")
+        q.share_evidence=True
+        q.request=lambda *a,**k:{"private":False,"id":1}
+        with self.assertRaises(ValueError):q.evidence(1,"ROM-EVIDENCE v1\n{}")
+        q.request=lambda *a,**k:{"private":True,"id":1}
+        q.evidence(1,"ROM-EVIDENCE v1\n{}")
+        q.request=lambda *a,**k:{"private":True,"id":2}
+        with self.assertRaises(ValueError):q.evidence(1,"ROM-EVIDENCE v1\n{}")
+
 if __name__=="__main__":unittest.main()
+
