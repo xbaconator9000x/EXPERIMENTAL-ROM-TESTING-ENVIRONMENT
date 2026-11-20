@@ -6,7 +6,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#ifdef _WIN32
+#include <direct.h>
+#define create_dir(path) _mkdir(path)
+#else
 #include <sys/stat.h>
+#define create_dir(path) mkdir(path,0700)
+#endif
 #define STRIDE 256
 #define CAP 200000u
 static volatile int crashed;
@@ -54,7 +60,7 @@ static int capture(const char *dir,const uint32_t *pixels,unsigned line) {
 int main(int argc,char **argv) {
     if(argc!=4){fprintf(stderr,"usage: %s ROM scenario outdir\n",argv[0]);return 2;}
     FILE *in=fopen(argv[2],"r"); if(!in){perror("scenario");return 2;}
-    if(mkdir(argv[3],0700)&&errno!=EEXIST){perror("output");fclose(in);return 2;}
+    if(create_dir(argv[3])&&errno!=EEXIST){perror("output");fclose(in);return 2;}
     struct mCore *c=mCoreFind(argv[1]);
     if(!c || !c->init(c)){fclose(in);return 3;}
     mCoreInitConfig(c,"gba-state-runner");
