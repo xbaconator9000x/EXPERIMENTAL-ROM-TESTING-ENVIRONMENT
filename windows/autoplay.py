@@ -45,7 +45,7 @@ def post(remote,number,status,meta,rgb):
     # Only a fixed, bounded screenshot and recent decisions. No states, ROM or files.
     remote.verify()
     payload={"status":status,"decisions":meta["decisions"],"frames":meta["frames"],
-             "screen":hashlib.sha256(rgb).hexdigest(),"history":meta.get("history",[])[-4:],"review":meta.get("review"),"failed_action":meta.get("failed_action"),"model_error":meta.get("model_error"),"engine_metrics":meta.get("engine_metrics"),"native_field":meta.get("last_native_field"),"native_transitions":len(meta.get("observed_field_transitions",[]))}
+             "screen":hashlib.sha256(rgb).hexdigest(),"history":meta.get("history",[])[-4:],"review":meta.get("review"),"failed_action":meta.get("failed_action"),"model_error":meta.get("model_error"),"engine_metrics":meta.get("engine_metrics"),"native_field":meta.get("last_native_field"),"native_transitions":len(meta.get("observed_field_transitions",[])),"native_diagnostics":meta.get("native_diagnostics"),"objective_state":meta.get("objective_state"),"last_incident":meta.get("last_incident"),"recovery_attempts":len(meta.get("recovery",{}).get("attempts",[]))}
     remote.request("/issues/"+str(number)+"/comments",{"body":"ROM-AUTOPLAY v1\n"+json.dumps(payload,ensure_ascii=True,separators=(",",":"))})
     data=png(rgb);encoded=base64.b64encode(data).decode("ascii");parts=(len(encoded)+43999)//44000
     for i in range(parts):
@@ -68,6 +68,7 @@ def main():
         if lock.tell()==0:lock.write(b"0");lock.flush()
         lock.seek(0);msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
         print("Continuous player polling private queue. Ctrl+C to stop.",flush=True)
+        retry_delay=15
         while True:
             try:
                 for issue in poll_goals(remote):
@@ -111,7 +112,15 @@ def main():
                         identity={"rom":job["sha256"],"runner":fingerprint(RUNNER),"goal":job["goal"],"model":a.model}
                         try:prior=load_progress(folder/"progress.bin",identity)
                         except (ValueError,OSError,KeyError):continue
-                        if not prior or not guidance(prior[0],hashlib.sha256(prior[2]).hexdigest()):continue
+                        if not prior:continue
+                        # Upgrade of an old repetitive-field review can restart
+                        # once under the new recovery policy. Never auto-resume
+                        # actual ending or emulator error.
+                        marker=folder/"unattended-v1-resume"
+                        previous_reason=prior[0].get("review",{}) or {}
+                        upgrade_retry=(finished.get("status")=="NEEDS_REVIEW" and "repeated screen cycle" in previous_reason.get("reason","") and not marker.exists())
+                        if not upgrade_retry and not guidance(prior[0],hashlib.sha256(prior[2]).hexdigest()):continue
+                        if upgrade_retry:marker.write_text("bounded recovery enabled\n",encoding="ascii")
                         done.unlink()
                     def checked_guide(meta,screen):
                         try:return guidance(meta,screen,consume=True)
@@ -127,8 +136,10 @@ def main():
                         if status!="MODEL_UNAVAILABLE_OR_INVALID":
                             tmp=done.with_suffix(".tmp");tmp.write_text(json.dumps({"status":status,"decisions":meta["decisions"]}),encoding="utf-8");os.replace(tmp,done)
                     break
+                retry_delay=15
             except (OSError,ValueError,KeyError,RuntimeError) as e:
                 print("Controller retry: "+type(e).__name__,flush=True)
-            time.sleep(15)
+                retry_delay=min(120,retry_delay*2)
+            time.sleep(retry_delay)
 
 if __name__=="__main__":main()

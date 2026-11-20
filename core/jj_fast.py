@@ -97,7 +97,7 @@ def decode_party(raw):
 
 class Adapter:
     def __init__(self,rom,sha):
-        self.size=0;self.admitted=False
+        self.size=0;self.admitted=False;self.reason="ROM_NOT_ADMITTED"
         if sha!=SHA:return
         data=Path(rom).read_bytes();self.size=len(data)
         if hashlib.sha256(data).hexdigest()!=sha or data[0xac:0xb0]!=b"BPRE" or data[0xbc]!=0:return
@@ -112,12 +112,13 @@ class Adapter:
     def attach(self,live):
         self.live=live
     def candidate(self,rgb):
-        if not self.admitted or ordinary_dialogue(rgb):return None
+        if not self.admitted:return None
+        if ordinary_dialogue(rgb):self.reason="DIALOGUE_ACTIVE";return None
         l=self.live
         try:
             cb=l.integer(MAIN+4,4)
-            if not cb&1 or not span(cb&~1,2,0x08000000,0x08000000+self.size):return None
-            if l.integer(SCRIPT,1)!=0 or l.integer(FADE,1)!=0:return None
+            if not cb&1 or not span(cb&~1,2,0x08000000,0x08000000+self.size):self.reason="CALLBACK_INVALID";return None
+            if l.integer(SCRIPT,1)!=0 or l.integer(FADE,1)!=0:self.reason="SCRIPT_OR_FADE_LOCK";return None
             p=Profile(SHA,SAVE_PTR,MAP_HEADER,VMAP,MAIN+4,cb,((SCRIPT,1,255,0),(FADE,1,255,0)))
             field=Reader(l,p).snapshot()
             objects=l.read(OBJECTS,36*16)
@@ -127,12 +128,13 @@ class Adapter:
                 if not flags&1:continue
                 x,y=signed(o,16)-7,signed(o,18)-7
                 if flags&0x10000:
-                    if flags&0x100:return None
+                    if flags&0x100:self.reason="PLAYER_FROZEN";return None
                     players.append((x,y))
                 elif 0<=x<field.width and 0<=y<field.height:occupied.add((x,y))
-            if players!=[field.pos]:return None
+            if players!=[field.pos]:self.reason="PLAYER_POSITION_MISMATCH";return None
+            self.reason="FIELD_STRUCTURES_VALID"
             return field,cb,occupied
-        except (LiveError,ValueError,IndexError):return None
+        except (LiveError,ValueError,IndexError):self.reason="FIELD_READ_REJECTED";return None
     def observe_move(self,before,after,actions,meta):
         if not before or not after or len(actions)!=1:return
         f,cb,_=before;g,cb2,_=after

@@ -163,7 +163,9 @@ class Dashboard:
                 self.controls.configure(text=action_text(recent) if recent else "—")
                 stats=meta.get("engine_metrics",{})
                 suffix=f" | Native {stats.get('native',0)} | Model calls {stats.get('model_calls',0)}" if stats else ""
-                self.model.configure(text=("Model: "+str(identity.get("model","—"))+suffix)[:145])
+                diag=meta.get("native_diagnostics",{})
+                if diag:suffix+=f" | Field: {'active' if diag.get('field_verified') else diag.get('field_reason','pending')}"
+                self.model.configure(text=("Model: "+str(identity.get("model","—"))+suffix)[:240])
                 self.history.configure(state="normal");self.history.delete("1.0","end")
                 for row in reversed(history[-12:]):
                     self.history.insert("end",f"#{row.get('decision','?')}  {action_text(row)}\n{str(row.get('scene',''))[:100]}\n\n")
@@ -177,7 +179,8 @@ class Dashboard:
             elif age>180:self.status("NO RECENT CHECKPOINT","#92400e")
             elif meta["decisions"]==0:self.status("FIRST DECISION PENDING","#1d4ed8")
             else:self.status("CHECKPOINT VERIFIED","#166534")
-            self.footer.configure(text="Screen and counters reflect the last saved decision, not continuous 60 FPS video. "+("No recent update; the model may be slow, stopped, or retrying." if age>180 else "Hash-verified local checkpoint."))
+            q=meta.get("objective_state",{})
+            self.footer.configure(text=("Objective: "+str(q.get("phase","waiting for native evidence")).replace("_"," ")+" | ")+"Screen reflects last saved decision. "+("No recent update; the model may be slow, stopped, or retrying." if age>180 else "Hash-verified local checkpoint."))
         except (OSError,ValueError,KeyError,TypeError,tk.TclError):
             self.status("WAITING FOR VALID SNAPSHOT","#92400e")
             self.footer.configure(text="Checkpoint not readable yet; retrying automatically.")
