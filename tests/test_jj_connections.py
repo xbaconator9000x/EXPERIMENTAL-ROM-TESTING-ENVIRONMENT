@@ -24,3 +24,25 @@ class Tests(unittest.TestCase):
         observe_arrival(m,(Field((3,4),(0,1),4,4,(0,)*16),1,set()),True)
         self.assertTrue(m["verified_crossings"][0]["matched"])
         self.assertNotIn("pending_crossing",m)
+
+    def test_explore_crossing_and_initial_party_priority(self):
+        from core.jj_explore import Explorer
+        class Adapter:
+            def verified_field(self,c,m):return bool(c)
+        ex=Explorer(Adapter());f=Field((1,2),(3,1),4,4,(0,)*16);c=(f,1,set())
+        events=crossings(Live(),0x20000,f);m={}
+        self.assertTrue(ex.request(c,m,(events,"RIGHT"),"exit"))
+        d,cmd=ex.next(c,m,(events,"RIGHT"))
+        self.assertEqual(cmd,("cross",None))
+        self.assertEqual(d["actions"][0]["button"],"RIGHT")
+        ex.finish(m,c,None,cmd)
+        self.assertNotIn("verified_crossings",m)
+        self.assertEqual(m["pending_crossing"]["destination"],[3,4])
+        npc={"kind":"npc","x":0,"y":0,"id":1,"gfx":1}
+        c=(f,1,{(0,0)})
+        m={"native_party_count":0}
+        self.assertTrue(ex.request(c,m,(events+[npc],"RIGHT"),"explore"))
+        self.assertEqual(m["event_goal"]["event"]["kind"],"npc")
+        m={"native_party_count":1}
+        self.assertTrue(ex.request(c,m,(events+[npc],"RIGHT"),"explore"))
+        self.assertEqual(m["event_goal"]["event"]["kind"],"connection")

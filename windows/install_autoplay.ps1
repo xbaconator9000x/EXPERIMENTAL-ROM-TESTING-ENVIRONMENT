@@ -13,11 +13,11 @@ if (!(Test-Path '.\build\live_runner.exe') -or !(Test-Path '.\windows\host.py'))
 $py = (Get-Command py.exe -ErrorAction Stop).Source
 $ollama = (Get-Command ollama.exe -ErrorAction Stop).Source
 $files = @(
-    'core/live.py','core/playthrough.py','core/gameplay.py','core/guidance.py','core/rom_catalog.py','core/firered.py','core/jj_fast.py','core/jj_battle.py','core/jj_explore.py','core/jj_menus.py','core/jj_runtime.py','core/autoplay.py',
+    'core/live.py','core/playthrough.py','core/gameplay.py','core/guidance.py','core/rom_catalog.py','core/firered.py','core/jj_fast.py','core/jj_battle.py','core/jj_explore.py','core/jj_menus.py','core/jj_runtime.py','core/jj_connections.py','core/autoplay.py',
     'vendor/pokemon_agent/pathfinding.py','vendor/pokemon_agent/LICENSE','vendor/pokemon_agent/README.md',
     'windows/host.py','windows/local_state.py','windows/queue_host.py','windows/autoplay.py','windows/dashboard.py',
-    'tests/test_autoplay.py','tests/test_gameplay.py','tests/test_redundancy.py','tests/test_dashboard.py','tests/test_rom_catalog.py','tests/test_jj_fast.py','tests/test_jj_battle.py','tests/test_jj_explore.py','tests/test_jj_menus.py','tests/test_jj_runtime.py',
-    'docs/CONTINUOUS_AUTOPLAY.md','docs/POKEMON_GAMEPLAY_AGENT.md','docs/CONSOLIDATED_PLAYER.md','docs/JJ_FAST_GAMEPLAY.md','docs/JJ_NATIVE_BATTLE.md','docs/JJ_EXPLORATION.md','docs/JJ_MENU_DRIVER.md','docs/JJ_RUNTIME_METRICS.md'
+    'tests/test_autoplay.py','tests/test_gameplay.py','tests/test_redundancy.py','tests/test_dashboard.py','tests/test_rom_catalog.py','tests/test_jj_fast.py','tests/test_jj_battle.py','tests/test_jj_explore.py','tests/test_jj_menus.py','tests/test_jj_runtime.py','tests/test_jj_connections.py',
+    'docs/CONTINUOUS_AUTOPLAY.md','docs/POKEMON_GAMEPLAY_AGENT.md','docs/CONSOLIDATED_PLAYER.md','docs/JJ_FAST_GAMEPLAY.md','docs/JJ_NATIVE_BATTLE.md','docs/JJ_EXPLORATION.md','docs/JJ_MENU_DRIVER.md','docs/JJ_RUNTIME_METRICS.md','docs/JJ_CONNECTIONS.md'
 )
 $base = "https://raw.githubusercontent.com/xbaconator9000x/EXPERIMENTAL-ROM-TESTING-ENVIRONMENT/$Commit"
 $stage = Join-Path $env:TEMP ("rom-player-" + [Guid]::NewGuid().ToString('N'))
@@ -51,7 +51,7 @@ try {
         $installed += $file
         Copy-Item (Join-Path $incoming $file) $dest -Force
     }
-    foreach ($pattern in @('test_autoplay.py','test_gameplay.py','test_redundancy.py','test_dashboard.py','test_rom_catalog.py','test_jj_fast.py','test_jj_battle.py','test_jj_explore.py','test_jj_menus.py','test_jj_runtime.py')) {
+    foreach ($pattern in @('test_autoplay.py','test_gameplay.py','test_redundancy.py','test_dashboard.py','test_rom_catalog.py','test_jj_fast.py','test_jj_battle.py','test_jj_explore.py','test_jj_menus.py','test_jj_runtime.py','test_jj_connections.py')) {
         & $py -3.12 -m unittest discover -s tests -p $pattern
         if ($LASTEXITCODE -ne 0) { throw "Local regression failed: $pattern" }
     }

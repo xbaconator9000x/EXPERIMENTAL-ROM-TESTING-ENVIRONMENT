@@ -24,6 +24,7 @@ from core.jj_battle import BattleAdapter
 from core.jj_explore import Explorer
 from core.jj_menus import MenuDriver,intent_from_battle
 from core.jj_runtime import NATIVE, animation_wait, record_field, count_decision, recovery_allowed
+from core.jj_connections import observe_arrival
 
 BUTTONS={"A":1,"B":2,"SELECT":4,"START":8,"RIGHT":16,"LEFT":32,"UP":64,"DOWN":128,"R":256,"L":512,"WAIT":0}
 SCHEMA={"type":"object","additionalProperties":False,"required":["scene","objective","actions","review"],"properties":{
@@ -114,7 +115,7 @@ class OllamaVision:
         payload={"model":model,"stream":False,"format":SCHEMA if rich else COMPACT_SCHEMA,"keep_alive":"10m" if model==self.model else "0s","options":{"temperature":0.1,"num_predict":450 if rich else 240,"num_ctx":4096},
                  "messages":[{"role":"system","content":system},{"role":"user","content":context,"images":[base64.b64encode(png(rgb,3)).decode("ascii")]}]}
         if not rich:
-            payload["messages"][0]["content"]="Pokémon GBA player. Read the current image. Choose up to 3 short ordinary controller actions, not code. If native_field is present, you may supply field_target [x,y] on a passable tile using origin and grid; controller walks there and stops on unexpected state. If reachable_events are provided, field_task explore/interact/exit delegates an untried event approach. Report observation.stage and new location/quest facts if known. START title, A dialogue, D-pad movement. Follow the goal and notebook; avoid repeated failed actions. Use review only for ending or genuine blockage. Return the required JSON."
+            payload["messages"][0]["content"]="Pokémon GBA player. Read the current image. Choose up to 3 short ordinary controller actions, not code. If native_field is present, you may supply field_target [x,y] on a passable tile using origin and grid; controller walks there and stops on unexpected state. If reachable_events are provided, field_task explore/interact/exit delegates an untried event approach. Report observation.stage and new location/quest facts if known. START title, A dialogue, D-pad movement. Follow the goal and notebook; prioritize obtaining the initial Pokémon, then new NPCs and unexplored maps. Avoid repeated failed actions. Use review only for ending or genuine blockage. Return the required JSON."
         req=urllib.request.Request("http://127.0.0.1:11434/api/chat",data=json.dumps(payload).encode(),headers={"Content-Type":"application/json"})
         with self.opener.open(req,timeout=self.timeout) as response:body=response.read(256*1024+1)
         if len(body)>256*1024:raise ValueError("Model reply too large")
@@ -267,6 +268,8 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 model.structured=adapter.structured(field_before,meta)
                 if model.structured is not None:
                     model.structured["inventory"]=battles.bag(live)
+                    party=model.structured.get("party")
+                    if isinstance(party,list):meta["native_party_count"]=len(party)
                     # Reachability is computed only when the strategic model is called.
                 native_battle=battles.summary(battle_before,meta)
                 if native_battle is not None:model.structured={"battle":native_battle}
@@ -351,7 +354,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 save_progress(path,identity,meta,live.save_state(),rgb)
                 report("NEEDS_REVIEW",meta,rgb);return "NEEDS_REVIEW",meta,rgb
             # Segment the native 200k-frame guard without losing game state.
-            settle=150 if source=="fast_dialogue" else (150 if event_command and event_command[0]=="interact" else 16) if source in ("native_route","native_explore") else settle_frames(decision,source)
+            settle=150 if source=="fast_dialogue" else (150 if event_command and event_command[0] in ("interact","cross") else 16) if source in ("native_route","native_explore") else settle_frames(decision,source)
             cost=sum(a["frames"]+settle for a in actions)
             if session_frames+cost>180000:
                 state=live.save_state();live.close();live=open_live(state);session_frames=0
@@ -376,6 +379,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if source.startswith("vision") or source=="remote_guidance":adapter.observe_move(field_before,field_after,actions,meta)
             record_field(meta,field_after,adapter.verified_field(field_after,meta))
             if source=="native_explore":explorer.finish(meta,field_before,field_after,event_command)
+            observe_arrival(meta,field_after,adapter.verified_field(field_after,meta))
             if source=="native_route":
                 if not field_after or not field_before or field_after[0].map_id!=field_before[0].map_id or field_after[0].pos!=route_expected:meta.pop("native_route",None)
                 elif meta.get("native_route"):meta["native_route"]["remaining"]-=1
@@ -404,7 +408,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 shutil.copyfile(path,backup);os.replace(backup,folder/"previous.bin")
             save_progress(path,identity,meta,state,rgb)
             with (folder/"actions.jsonl").open("a",encoding="utf-8") as log:log.write(json.dumps(entry,ensure_ascii=True)+"\n")
-            if meta["decisions"]==1 or (meta["decisions"]%5==0 and (source not in ("fast_dialogue","native_route","native_battle","native_explore") or time.monotonic()-last_report>=30)):
+            if meta["decisions"]==1 or (meta["decisions"]%5==0 and (source not in NATIVE or time.monotonic()-last_report>=30)):
                 report("RUNNING",meta,rgb);last_report=time.monotonic()
             if len(meta["history"])>=24 and len({h["after"] for h in meta["history"][-24:]})<=2:
                 meta["review"]={"scene":decision["scene"],"objective":decision["objective"],"reason":"repeated screen cycle; alternative action required"}

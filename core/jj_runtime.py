@@ -35,6 +35,9 @@ def record_field(meta,field,verified):
         if edge not in edges:edges.append(edge)
         meta["observed_field_transitions"]=edges[-100:]
     meta["last_native_field"]=current
+    visits=meta.setdefault("visited_native_maps",[])
+    if current["map"] not in visits:visits.append(current["map"])
+    meta["visited_native_maps"]=visits[-300:]
 
 def count_decision(meta,source,elapsed,model_seconds,frames):
     stats=meta.setdefault("engine_metrics",{"native":0,"model_calls":0,"other":0,"seconds":0.0,"model_seconds":0.0,"frames":0})

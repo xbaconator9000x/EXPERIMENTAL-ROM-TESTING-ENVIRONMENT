@@ -2,6 +2,7 @@
 from core.jj_fast import OBJECTS, MAP_HEADER, DIR, u, signed
 from core.firered import span
 from core.live import LiveError
+from core.jj_connections import crossings
 from vendor.pokemon_agent.pathfinding import find_path
 
 FACING={1:"DOWN",2:"UP",3:"LEFT",4:"RIGHT"}
@@ -30,7 +31,9 @@ def event_targets(live,rom_size,field):
         if flags&0x2000:continue # invisible
         if 0<=x<field.width and 0<=y<field.height:
             npcs.append({"kind":"npc","x":x,"y":y,"id":o[8],"gfx":o[5]})
-    return warps+npcs,facing
+    try:connections=crossings(live,rom_size,field)
+    except (ValueError,LiveError,IndexError):connections=[]
+    return warps+npcs+connections,facing
 
 def event_key(field,event):
     return ":".join(map(str,(*field.map_id,event["kind"],event["id"],event["x"],event["y"])))
@@ -43,7 +46,7 @@ def options(field,occupied,events,attempted):
         key=event_key(field,e)
         if key in attempted:continue
         p=(e["x"],e["y"])
-        if e["kind"]=="warp":goals=[(p,None)]
+        if e["kind"] in ("warp","connection"):goals=[(p,e.get("direction"))]
         else:goals=[((p[0]-dx,p[1]-dy),d) for d,(dx,dy) in DIR.items()]
         for target,direction in goals:
             if target==field.pos:path=[]
@@ -74,11 +77,21 @@ class Explorer:
     def request(self,candidate,meta,info,task):
         if not info or task not in ("explore","interact","exit"):return False
         f,_,occupied=candidate;events,_=info
-        if task!="explore":events=[e for e in events if e["kind"]==("npc" if task=="interact" else "warp")]
+        if task=="interact":events=[e for e in events if e["kind"]=="npc"]
+        elif task=="exit":events=[e for e in events if e["kind"] in ("warp","connection")]
         choices=options(f,occupied,events,meta.get("event_attempts",[]))
         if not choices:return False
-        _,key,target,facing,event,path=choices[0]
-        if not path and event["kind"]=="warp":return False # requires dedicated warp/door behavior
+        choices=[c for c in choices if c[5] or c[4]["kind"]!="warp"]
+        if not choices:return False
+        party=meta.get("native_party_count")
+        visited={tuple(m) for m in meta.get("visited_native_maps",[])}
+        def rank(c):
+            dist,_,_,_,event,_=c
+            priority=0 if party==0 and event["kind"]=="npc" else 1
+            if party and event["kind"] in ("warp","connection"):
+                priority=0 if tuple(event["destination"]) not in visited else 2
+            return priority,dist,c[1],c[2]
+        _,key,target,facing,event,path=min(choices,key=rank)
         meta["event_goal"]={"map":list(f.map_id),"key":key,"event":event,"target":list(target),"facing":facing,"remaining":min(48,len(path)+3)}
         return True
     def next(self,candidate,meta,info):
@@ -90,14 +103,16 @@ class Explorer:
         warps={(e["x"],e["y"]) for e in events if e["kind"]=="warp"}
         if f.pos==target:
             if event["kind"]=="warp":return None
-            if facing!=goal["facing"]:
+            if event["kind"]=="connection":
+                action=event["direction"];expected=None;kind="cross"
+            elif facing!=goal["facing"]:
                 action=goal["facing"];expected=f.pos;kind="face"
             else:action="A";expected=None;kind="interact"
         else:
             path=find_path(f.pos,target,lambda x,y:f.passable(x,y) and (x,y) not in occupied and ((x,y) not in warps or (x,y)==target),f.width,f.height)
             if not path:return None
             action=path[0].upper();dx,dy=DIR[action];expected=(f.pos[0]+dx,f.pos[1]+dy);kind="move"
-        return {"scene":"native_exploration","objective":("Interact with observed NPC" if event["kind"]=="npc" else "Approach observed warp"),"actions":[{"button":action,"frames":1 if action!="A" else 5}],"review":False},(kind,expected)
+        return {"scene":"native_exploration","objective":("Interact with observed NPC" if event["kind"]=="npc" else "Travel toward observed connection" if event["kind"]=="connection" else "Approach observed warp"),"actions":[{"button":action,"frames":1 if action!="A" else 5}],"review":False},(kind,expected)
     def finish(self,meta,before,after,command):
         goal=meta.get("event_goal")
         if not goal:return
@@ -107,7 +122,9 @@ class Explorer:
             edge={"from":list(f.map_id),"to":list(after[0].map_id),"event":goal["event"]["id"]}
             if edge not in edges:edges.append(edge)
             meta["map_transitions"]=edges[-100:]
-        if kind=="interact" or not after or after[0].map_id!=f.map_id or (expected is not None and after[0].pos!=expected):
+        if kind=="cross":
+            meta["pending_crossing"]={"from":list(f.map_id),"destination":goal["event"]["destination"],"event":goal["event"]["id"]}
+        if kind in ("interact","cross") or not after or after[0].map_id!=f.map_id or (expected is not None and after[0].pos!=expected):
             attempted=meta.get("event_attempts",[])
             if goal["key"] not in attempted:attempted.append(goal["key"])
             meta["event_attempts"]=attempted[-300:]
