@@ -85,8 +85,9 @@ def run(job,stop,runner=RUNNER,library=LIBRARY,runs=RUNS,timeout=600,run_id=None
     source=library/(sha+".gba")
     if not source.is_file():return "ROM_NOT_REGISTERED"
     if not 0<source.stat().st_size<=32*1024*1024 or fingerprint(source)!=sha:return "ROM_HASH_MISMATCH"
-    folder=runs/("remote-"+uuid.uuid4().hex if run_id is None else run_id)
-    if not re.fullmatch(r"remote-[a-f0-9]{32}",folder.name):raise ValueError("Invalid run id")
+    run_id="remote-"+uuid.uuid4().hex if run_id is None else run_id
+    if not re.fullmatch(r"remote-[a-f0-9]{32}",run_id):raise ValueError("Invalid run id")
+    folder=runs/run_id
     folder.mkdir(parents=True)
     with tempfile.TemporaryDirectory(dir=folder,prefix="private-") as work:
         work=Path(work)
@@ -159,7 +160,7 @@ def safe_log(path):
         return [line for line in raw.decode("ascii",errors="replace").splitlines()
                 if any(p.fullmatch(line) for p in allowed)]
     first=select(head);last=select(tail)
-    if path.stat().st_size<=32000:return "\n".join(first)[:MAX_LOG]
+    if path.stat().st_size<=MAX_LOG:return "\n".join(first)[:MAX_LOG]
     return ("\n".join(first)[:MAX_LOG//2]+"\n[log excerpt; middle omitted]\n"+"\n".join(last)[-MAX_LOG//2:])
 
 def evidence_parts(folder):
@@ -236,7 +237,7 @@ class Remote:
 
     def evidence(self,n,body):
         if not self.share_evidence:raise ValueError("Evidence sharing disabled")
-        if type(n) is not int or n<1 or not body.startswith("ROM-EVIDENCE v1\n") or len(body)>48000:
+        if type(n) is not int or n<1 or not body.startswith(("ROM-EVIDENCE v1\n","ROM-EVIDENCE-COMPLETE v1\n")) or len(body)>48000:
             raise ValueError("Invalid evidence envelope")
         self.verify()
         self.request("/issues/"+str(n)+"/comments",{"body":body})
@@ -277,7 +278,7 @@ def poll(remote,path,stop,emit):
                         write_ledger(path,ledger)
                         emit("Issue #"+str(issue["number"])+": "+ledger[key]["status"])
                     entry=ledger[key]
-                    if remote.share_evidence and entry.get("run_id") and not entry.get("evidence_done"):
+                    if remote.share_evidence and re.fullmatch(r"remote-[a-f0-9]{32}",entry.get("run_id","")) and not entry.get("evidence_done"):
                         parts=evidence_parts(RUNS/entry["run_id"])
                         for index in range(entry.get("evidence_next",0),len(parts)):
                             if stop.is_set():break
@@ -285,7 +286,9 @@ def poll(remote,path,stop,emit):
                             entry["evidence_next"]=index+1
                             write_ledger(path,ledger)
                             stop.wait(1.2)
-                        if entry.get("evidence_next",0)==len(parts):
+                        if entry.get("evidence_next",0)==len(parts) and not stop.is_set():
+                            names=sorted({json.loads(p.split("\n",1)[1])["name"] for p in parts})
+                            remote.evidence(issue["number"],"ROM-EVIDENCE-COMPLETE v1\n"+json.dumps({"status":entry["status"],"parts":len(parts),"files":names},separators=(",",":")))
                             entry["evidence_done"]=True
                             write_ledger(path,ledger)
                             emit("Issue #"+str(issue["number"])+": evidence sent ("+str(len(parts))+" parts)")
