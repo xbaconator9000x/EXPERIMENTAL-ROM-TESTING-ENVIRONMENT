@@ -30,5 +30,17 @@ jobs:
           python -c "from agent.lm_studio_client import AgentClient; assert callable(AgentClient._execute)"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Remove-Item Env:PYTHONPATH
+      - name: Verify installer parses and includes all upstream modules
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path windows/install_autoplay.ps1), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { $errors | Format-List; throw "Installer parse failed" }
+          $source = Get-Content windows/install_autoplay.ps1 -Raw
+          foreach ($file in (Get-ChildItem core/upstream*.py,core/upstream_leafgreen/*.py,tests/test_upstream*.py)) {
+              $rel = $file.FullName.Substring((Get-Location).Path.Length+1).Replace([char]92,[char]47)
+              if (!$source.Contains("'$rel'")) { throw "Missing upstream installer entry: $rel" }
+          }
       - name: Run all host and upstream tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
