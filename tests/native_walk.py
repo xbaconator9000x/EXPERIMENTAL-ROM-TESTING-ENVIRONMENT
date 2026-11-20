@@ -32,3 +32,32 @@ with Live("build/live_runner",rom,sha) as live:
     else:
         raise AssertionError("IO memory read unexpectedly permitted")
     print("NATIVE WALK PASS",trace)
+
+# Capture a known white framebuffer and verify the complete RGB payload.
+from core.probe import inspect, run
+from dataclasses import asdict
+from tempfile import TemporaryDirectory
+
+input_rom=Path("build/synthetic.gba")
+input_sha=hashlib.sha256(input_rom.read_bytes()).hexdigest()
+with TemporaryDirectory() as folder:
+    image=Path(folder)/"frame.ppm"
+    with Live("build/live_runner",input_rom,input_sha) as live:
+        live.step(0,120)
+        live.screenshot(image)
+        raw=image.read_bytes()
+        header=b"P6\n240 160\n255\n"
+        assert raw.startswith(header) and len(raw)==len(header)+240*160*3
+        assert raw[len(header):]==b"\xff"*(240*160*3),"unexpected framebuffer pixels"
+        print("NATIVE FRAME PASS: exact white RGB framebuffer")
+    with Live("build/live_runner",rom,sha) as live:
+        live.step(0,120)
+        candidate=asdict(profile)
+        out=Path(folder)/"probe"
+        run(live,candidate,[{"op":"observe"},{"op":"press","key":"DOWN","frames":1,"release":2,"capture":True}],out)
+        import json
+        observations=[json.loads(line)["observed"]["field"] for line in (out/"trace.jsonl").read_text().splitlines()]
+        assert observations[0]["position"]==[0,0]
+        assert observations[1]["position"]==[0,1]
+        assert (out/"frame-0001.ppm").stat().st_size==len(header)+240*160*3
+        print("NATIVE PROBE PASS: two observed positions")
