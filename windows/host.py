@@ -206,10 +206,14 @@ class Host(tk.Tk):
     def run_worker(self, command, folder):
         code = -1
         try:
+            env = os.environ.copy()
+            msys_bin = Path(env.get("MSYS2_UCRT64_BIN", r"C:\\msys64\\ucrt64\\bin"))
+            if msys_bin.is_dir():
+                env["PATH"] = str(msys_bin) + os.pathsep + env.get("PATH", "")
             with (folder / "output.log").open("w", encoding="utf-8") as log:
                 self.process = subprocess.Popen(command, stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT, text=True, errors="replace",
-                    cwd=str(REPO), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                    cwd=str(REPO), env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 for line in self.process.stdout:
                     log.write(line)
                     log.flush()
