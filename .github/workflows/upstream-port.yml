@@ -13,5 +13,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/checkout@v4
+        with:
+          repository: haggyroth/pokemon-agent
+          ref: 594bfc7e3c208890c248269b67c5a1cf95074965
+          path: upstream-source
+      - name: Install upstream Python skill dependencies
+        run: python -m pip install requests openai rich python-dotenv
+      - name: Confirm actual upstream dispatcher imports
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = (Resolve-Path upstream-source)
+          python -c "from agent.lm_studio_client import AgentClient; assert callable(AgentClient._execute)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item Env:PYTHONPATH
       - name: Run all host and upstream tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
