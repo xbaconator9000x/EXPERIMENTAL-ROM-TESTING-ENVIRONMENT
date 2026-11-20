@@ -1,0 +1,116 @@
+"""Bounded purposeful exploration using witnessed native field state."""
+from core.jj_fast import OBJECTS, MAP_HEADER, DIR, u, signed
+from core.firered import span
+from core.live import LiveError
+from vendor.pokemon_agent.pathfinding import find_path
+
+FACING={1:"DOWN",2:"UP",3:"LEFT",4:"RIGHT"}
+
+def event_targets(live,rom_size,field):
+    """Only expose in-map coordinates from structurally checked ROM pointers."""
+    def romread(ptr,n):
+        if not span(ptr,n,0x08000000,0x08000000+rom_size):raise ValueError("event pointer")
+        return live.read(ptr,n)
+    ptr=live.integer(MAP_HEADER+4,4)
+    if ptr%4:raise ValueError("events alignment")
+    data=romread(ptr,20);count=data[1];warps=[]
+    if count>64:raise ValueError("warp count")
+    if count:
+        raw=romread(u(data,8,4),count*8)
+        for i in range(count):
+            x,y=signed(raw,i*8),signed(raw,i*8+2)
+            if not (0<=x<field.width and 0<=y<field.height):raise ValueError("warp location")
+            warps.append({"kind":"warp","x":x,"y":y,"id":i,"destination":[raw[i*8+7],raw[i*8+6]]})
+    objects=live.read(OBJECTS,36*16);npcs=[];facing=None
+    for i in range(16):
+        o=objects[i*36:(i+1)*36];flags=u(o,0,4)
+        if not flags&1:continue
+        x,y=signed(o,16)-7,signed(o,18)-7
+        if flags&0x10000:facing=FACING.get(o[24]&15);continue
+        if flags&0x2000:continue # invisible
+        if 0<=x<field.width and 0<=y<field.height:
+            npcs.append({"kind":"npc","x":x,"y":y,"id":o[8],"gfx":o[5]})
+    return warps+npcs,facing
+
+def event_key(field,event):
+    return ":".join(map(str,(*field.map_id,event["kind"],event["id"],event["x"],event["y"])))
+
+def options(field,occupied,events,attempted):
+    """Rank reachable untried events, staying off unrelated warp tiles."""
+    candidates=[]
+    warps={(e["x"],e["y"]) for e in events if e["kind"]=="warp"}
+    for e in events:
+        key=event_key(field,e)
+        if key in attempted:continue
+        p=(e["x"],e["y"])
+        if e["kind"]=="warp":goals=[(p,None)]
+        else:goals=[((p[0]-dx,p[1]-dy),d) for d,(dx,dy) in DIR.items()]
+        for target,direction in goals:
+            if target==field.pos:path=[]
+            else:
+                path=find_path(field.pos,target,lambda x,y:field.passable(x,y) and (x,y) not in occupied and ((x,y) not in warps or (x,y)==target),field.width,field.height)
+                if path is None:continue
+            candidates.append((len(path),key,tuple(target),direction,e,path))
+    return sorted(candidates,key=lambda c:(c[0],c[1],c[2]))
+
+class Explorer:
+    def __init__(self,adapter):self.adapter=adapter
+    def inspect(self,candidate,meta):
+        if not self.adapter.verified_field(candidate,meta):return None
+        try:return event_targets(self.adapter.live,self.adapter.size,candidate[0])
+        except (ValueError,LiveError,IndexError):return None
+    def describe(self,candidate,meta,info):
+        if not info:return {}
+        f,_,occupied=candidate;events,_=info
+        tried=meta.get("event_attempts",[])
+        choices=options(f,occupied,events,tried)
+        result=[];seen=set()
+        for dist,key,target,facing,event,path in choices:
+            if key in seen:continue
+            seen.add(key)
+            result.append(dict(event,approach=list(target),distance=dist))
+            if len(result)>=12:break
+        return {"reachable_events":result,"recent_map_transitions":meta.get("map_transitions",[])[-8:]}
+    def request(self,candidate,meta,info,task):
+        if not info or task not in ("explore","interact","exit"):return False
+        f,_,occupied=candidate;events,_=info
+        if task!="explore":events=[e for e in events if e["kind"]==("npc" if task=="interact" else "warp")]
+        choices=options(f,occupied,events,meta.get("event_attempts",[]))
+        if not choices:return False
+        _,key,target,facing,event,path=choices[0]
+        if not path and event["kind"]=="warp":return False # requires dedicated warp/door behavior
+        meta["event_goal"]={"map":list(f.map_id),"key":key,"event":event,"target":list(target),"facing":facing,"remaining":min(48,len(path)+3)}
+        return True
+    def next(self,candidate,meta,info):
+        goal=meta.get("event_goal")
+        if not goal or not info or not candidate:return None
+        f,_,occupied=candidate;events,facing=info
+        if goal["map"]!=list(f.map_id) or goal["remaining"]<=0 or goal["event"] not in events:return None
+        target=tuple(goal["target"]);event=goal["event"]
+        warps={(e["x"],e["y"]) for e in events if e["kind"]=="warp"}
+        if f.pos==target:
+            if event["kind"]=="warp":return None
+            if facing!=goal["facing"]:
+                action=goal["facing"];expected=f.pos;kind="face"
+            else:action="A";expected=None;kind="interact"
+        else:
+            path=find_path(f.pos,target,lambda x,y:f.passable(x,y) and (x,y) not in occupied and ((x,y) not in warps or (x,y)==target),f.width,f.height)
+            if not path:return None
+            action=path[0].upper();dx,dy=DIR[action];expected=(f.pos[0]+dx,f.pos[1]+dy);kind="move"
+        return {"scene":"native_exploration","objective":("Interact with observed NPC" if event["kind"]=="npc" else "Approach observed warp"),"actions":[{"button":action,"frames":1 if action!="A" else 5}],"review":False},(kind,expected)
+    def finish(self,meta,before,after,command):
+        goal=meta.get("event_goal")
+        if not goal:return
+        f=before[0];kind,expected=command
+        if after and after[0].map_id!=f.map_id:
+            edges=meta.get("map_transitions",[])
+            edge={"from":list(f.map_id),"to":list(after[0].map_id),"event":goal["event"]["id"]}
+            if edge not in edges:edges.append(edge)
+            meta["map_transitions"]=edges[-100:]
+        if kind=="interact" or not after or after[0].map_id!=f.map_id or (expected is not None and after[0].pos!=expected):
+            attempted=meta.get("event_attempts",[])
+            if goal["key"] not in attempted:attempted.append(goal["key"])
+            meta["event_attempts"]=attempted[-300:]
+            meta.pop("event_goal",None)
+        else:
+            goal["remaining"]-=1

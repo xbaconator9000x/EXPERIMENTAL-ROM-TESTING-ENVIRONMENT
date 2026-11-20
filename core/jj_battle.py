@@ -27,7 +27,13 @@ FINGERPRINTS={
 }
 
 def anchors(data,addresses):
-    return all(any(data[i:i+4]==a.to_bytes(4,"little") for i in range(0,min(len(data),0x160000),4)) for a in addresses)
+    # Scan aligned literal references without a Python loop over every word.
+    end=min(len(data),0x160000)
+    for a in addresses:
+        needle=a.to_bytes(4,"little");i=data.find(needle,0,end)
+        while i>=0 and i%4:i=data.find(needle,i+1,end)
+        if i<0:return False
+    return True
 
 def decode_battler(b):
     if len(b)!=88:raise ValueError("battler length")
@@ -150,7 +156,7 @@ class BattleAdapter:
         own,enemy,bag=state["own"],state["enemy"],state["bag"]
         cursor=state["cursor"]
         rows=self.catalog.move_ids
-        healing=sum(x["count"] for x in bag["items"] if x["id"] in (19,20,21,22,23)) if bag else 0
+        healing=sum(x["count"] for x in bag["items"] if x["id"] in (13,19,20,21,22)) if bag else 0
         balls=sum(x["count"] for x in bag["balls"] if x["id"] in (2,3,4)) if bag else 0
         # Capture useful new species while building a starting team. Never
         # throw at trainers, use a Master Ball, or deliberately farm captures.
