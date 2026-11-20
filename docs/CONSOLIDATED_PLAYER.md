@@ -28,3 +28,17 @@ campaign is not yet proven.
 
 Neither the player nor remote guide can download or execute host updates.
 An explicit reviewed local installer is used for any new controller code.
+
+## Optional cartridge catalog
+
+For the exact known Jessie & James v1.01 digest and Classic goal, the local
+reader checks the BPRE header, aligned pointer witnesses, and multiple known
+species/move name/type anchors before admitting candidate legacy FireRed
+tables. It uses row data for recognized names, including actual ROM move
+power/accuracy; it never substitutes base PP for observed current PP.
+A relocated or incompatible table fails closed to vision. Anchor checks
+are not proof of all runtime table usage, especially in modified ROMs.
+No ROM data is exported. Source references:
+https://github.com/pret/pokefirered/blob/master/include/pokemon.h
+https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_3rd_Generation
+https://bulbapedia.bulbagarden.net/wiki/Move_data_structure_in_Generation_III

@@ -53,7 +53,7 @@ def clean_observation(raw):
     stage=raw.get("stage")
     if stage not in ("field","dialogue","battle_command","battle_moves","bag","party","title","menu","transition","other"):return {}
     out={"stage":stage}
-    for key in ("location","fact","target","enemy","bag_purpose"):
+    for key in ("location","fact","target","enemy","own","bag_purpose"):
         v=raw.get(key)
         if isinstance(v,str) and 0<len(v)<=180 and not any(ord(c)<32 for c in v):out[key]=v
     for key,lo,hi in (("cursor",0,3),("list_cursor",0,15),("hp",0,100),("enemy_hp",0,100),("balls",0,999),("healing_items",0,999),("party_count",0,6)):
@@ -69,10 +69,12 @@ def clean_observation(raw):
         for m in moves:
             if type(m) is not dict or not number(m.get("slot"),0,3) or not isinstance(m.get("name"),str) or not 1<=len(m["name"])<=30:continue
             if any(ord(c)<32 for c in m["name"]):continue
+            row={"slot":m["slot"],"name":m["name"]}
             mt=m.get("type")
-            if type(mt) is not str or mt.lower() not in TYPES:continue
-            if not number(m.get("power"),0,250) or not number(m.get("pp"),0,64) or not number(m.get("accuracy"),1,100):continue
-            clean.append({"slot":m["slot"],"name":m["name"],"type":mt.lower(),"power":m["power"],"pp":m["pp"],"accuracy":m["accuracy"]})
+            if type(mt) is str and mt.lower() in TYPES:row["type"]=mt.lower()
+            for key,lo,hi in (("power",0,250),("pp",0,64),("accuracy",1,100)):
+                if number(m.get(key),lo,hi):row[key]=m[key]
+            clean.append(row)
         if len({m["slot"] for m in clean})==len(clean):out["moves"]=clean
     items=raw.get("items")
     if isinstance(items,list) and 1<=len(items)<=16:
@@ -95,7 +97,7 @@ def best_move(obs,modern=False):
     own=obs.get("own_types",[])
     candidates=[]
     for m in obs.get("moves",[]):
-        if not m["pp"] or not m["power"]:continue
+        if not m.get("pp") or not m.get("power") or "type" not in m or "accuracy" not in m:continue
         e=effectiveness(m["type"],targets,modern)
         if e is None or not e:continue
         score=m["power"]*m["accuracy"]/100*e*(1.5 if m["type"] in own else 1)
