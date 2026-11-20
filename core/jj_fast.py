@@ -1,0 +1,191 @@
+"""Jessie & James v1.01 deterministic gameplay adapter.
+
+Exact-release gated. Candidate FRLG memory addresses are admitted only if
+present in the local cartridge, structurally valid at runtime, and corroborated
+by actual movement. Never write RAM, inject flags or use another ROM's callbacks.
+"""
+import hashlib
+import itertools
+import struct
+from pathlib import Path
+from core.firered import Reader, Profile, span
+from core.live import LiveError
+from vendor.pokemon_agent.pathfinding import find_path
+
+SHA="06d9c87234400f45f1fc3a356881f0ad8bd9b977bc5cbed450e5c7eedd01b632"
+SAVE_PTR=0x03005008
+MAP_HEADER=0x02036DFC
+VMAP=0x03005040
+MAIN=0x030030F0
+OBJECTS=0x02036E38
+SCRIPT=0x03000EB0
+FADE=0x03000F9C
+PARTY=0x02024284
+BATTLE=0x02023BE4
+CTRL=0x03004FE0
+DIR={"UP":(0,-1),"DOWN":(0,1),"LEFT":(-1,0),"RIGHT":(1,0)}
+KEYS={"UP":64,"DOWN":128,"LEFT":32,"RIGHT":16}
+ORDERS=list(itertools.permutations("GAEM"))
+def u(raw,offset,size=2):return int.from_bytes(raw[offset:offset+size],"little")
+def signed(raw,offset):return int.from_bytes(raw[offset:offset+2],"little",signed=True)
+
+def ordinary_dialogue(rgb):
+    """Detect observed orange Gen III textbox border, not dialogue text.
+    Refuse additional menu panels, unknown styles and battle split boxes.
+    Only recognized full-width field dialogue; never auto-select YES/NO.
+    """
+    if len(rgb)!=115200:return None
+    def colors(y):
+        return [tuple(rgb[(y*240+x)*3:(y*240+x)*3+3]) for x in range(240)]
+    def red(p):return p[0]>=175 and 35<=p[1]<=145 and 25<=p[2]<=125 and p[0]>p[1]+65
+    def white(p):return min(p)>=232
+    def gray(p):return 45<=p[0]<=125 and abs(p[0]-p[1])<=24 and abs(p[1]-p[2])<=24
+    def run(row,pred):
+        best=(0,0);start=None
+        for x,p in enumerate(row+[None]):
+            if p is not None and pred(p):
+                if start is None:start=x
+            elif start is not None:
+                if x-start>best[1]-best[0]:best=(start,x)
+                start=None
+        return best
+    borders=[]
+    for y in range(110,120):
+        x0,x1=run(colors(y),red)
+        if x1-x0>=180:borders.append((y,x0,x1))
+    if len(borders)<2:return None
+    y,x0,x1=borders[0]
+    # Field dialogue spans the screen; the centered battle-mode explanation
+    # is deliberately left to the planner because it contains setting choices.
+    if x0>10 or x1<229:return None
+    if sum(white(p) for p in colors(125))<150 or sum(white(p) for p in colors(147))<150:return None
+    if not any(sum(gray(p) for p in colors(i))>=175 for i in range(152,160)):return None
+    # Additional colored/white panel above the dialogue (Yes/No, choice menu,
+    # list, battle menu). Require two spaced orange horizontal runs over white.
+    for row in range(0,105):
+        lo,hi=run(colors(row),red)
+        if hi-lo>=24 and row+7<112 and sum(white(p) for p in colors(row+7)[lo:hi])>=max(12,(hi-lo)//2):
+            return None
+    # A separate white panel without the orange frame is also ambiguous.
+    for row in range(8,106,4):
+        lo,hi=run(colors(row),white)
+        if hi-lo>=30 and row+8<110 and sum(white(p) for p in colors(row+8)[lo:hi])>=hi-lo-5:
+            return None
+    # Text region only; exclude animated map background from stall identity.
+    text=b"".join(rgb[(i*240+12)*3:(i*240+228)*3] for i in range(121,151))
+    return hashlib.sha256(text).hexdigest()
+
+def decode_party(raw):
+    """Read-only Gen III XOR + checksum verification. Never trust corrupt slots."""
+    if len(raw)!=600:raise ValueError("party length")
+    result=[]
+    for slot in range(6):
+        b=raw[slot*100:(slot+1)*100]
+        level=b[84]
+        if level==0:continue
+        key=u(b,0,4)^u(b,4,4)
+        plain=b"".join((u(b,i,4)^key).to_bytes(4,"little") for i in range(32,80,4))
+        if sum(u(plain,i) for i in range(0,48,2))&0xffff!=u(b,28):raise ValueError("party checksum")
+        parts={letter:plain[i*12:i*12+12] for i,letter in enumerate(ORDERS[u(b,0,4)%24])}
+        species=u(parts["G"],0);moves=[u(parts["A"],2*i) for i in range(4)]
+        hp,mx=u(b,86),u(b,88)
+        if not 1<=species<=411 or not 1<=level<=100 or not 0<=hp<=mx<=999 or mx==0 or any(m>559 for m in moves) or any(p>64 for p in parts["A"][8:12]):
+            raise ValueError("party structure")
+        if b[19]&1:raise ValueError("bad egg flag")
+        result.append({"slot":slot,"species_id":species,"level":level,"hp":hp,"max_hp":mx,"moves":moves,"pp":list(parts["A"][8:12]),"status":u(b,80,4)})
+    return result
+
+class Adapter:
+    def __init__(self,rom,sha):
+        self.size=0;self.admitted=False
+        if sha!=SHA:return
+        data=Path(rom).read_bytes();self.size=len(data)
+        if hashlib.sha256(data).hexdigest()!=sha or data[0xac:0xb0]!=b"BPRE" or data[0xbc]!=0:return
+        # Candidate address literals must exist aligned in the executable area.
+        def anchored(addr):
+            needle=addr.to_bytes(4,"little");i=data.find(needle,0,min(len(data),0x160000))
+            while i>=0:
+                if i%4==0:return True
+                i=data.find(needle,i+1,min(len(data),0x160000))
+            return False
+        self.admitted=all(anchored(x) for x in (SAVE_PTR,MAP_HEADER,VMAP,MAIN,OBJECTS,SCRIPT,FADE,PARTY))
+    def attach(self,live):
+        self.live=live
+    def candidate(self,rgb):
+        if not self.admitted or ordinary_dialogue(rgb):return None
+        l=self.live
+        try:
+            cb=l.integer(MAIN+4,4)
+            if not cb&1 or not span(cb&~1,2,0x08000000,0x08000000+self.size):return None
+            if l.integer(SCRIPT,1)!=0 or l.integer(FADE,1)!=0:return None
+            p=Profile(SHA,SAVE_PTR,MAP_HEADER,VMAP,MAIN+4,cb,((SCRIPT,1,255,0),(FADE,1,255,0)))
+            field=Reader(l,p).snapshot()
+            objects=l.read(OBJECTS,36*16)
+            players=[];occupied=set()
+            for i in range(16):
+                o=objects[i*36:(i+1)*36];flags=u(o,0,4)
+                if not flags&1:continue
+                x,y=signed(o,16)-7,signed(o,18)-7
+                if flags&0x10000:
+                    if flags&0x100:return None
+                    players.append((x,y))
+                elif 0<=x<field.width and 0<=y<field.height:occupied.add((x,y))
+            if players!=[field.pos]:return None
+            return field,cb,occupied
+        except (LiveError,ValueError,IndexError):return None
+    def observe_move(self,before,after,actions,meta):
+        if not before or not after or len(actions)!=1:return
+        f,cb,_=before;g,cb2,_=after
+        direction=actions[0]["button"]
+        if direction not in DIR or cb!=cb2 or f.map_id!=g.map_id:return
+        dx,dy=DIR[direction]
+        if g.pos!=(f.pos[0]+dx,f.pos[1]+dy):return
+        proof=meta.setdefault("field_proof",{"callback":cb,"directions":[]})
+        if proof.get("callback")!=cb:proof={"callback":cb,"directions":[]};meta["field_proof"]=proof
+        if direction not in proof["directions"]:proof["directions"].append(direction)
+    def verified_field(self,candidate,meta):
+        proof=meta.get("field_proof",{})
+        return bool(candidate and candidate[1]==proof.get("callback") and len(set(proof.get("directions",[])))>=2)
+    def structured(self,candidate,meta):
+        if not self.verified_field(candidate,meta):return None
+        f,cb,objects=candidate
+        # Bound planner grid while keeping actual coordinates.
+        x,y=f.pos;left=max(0,x-8);top=max(0,y-6)
+        rows=[]
+        for j in range(top,min(top+13,f.height)):
+            rows.append("".join("P" if (i,j)==f.pos else "N" if (i,j) in objects else "." if f.passable(i,j) else "#" for i in range(left,min(left+17,f.width))))
+        out={"map":list(f.map_id),"player":list(f.pos),"origin":[left,top],"grid":rows,"legend":"P player,N object,. passable,# blocked"}
+        try:out["party"]=decode_party(self.live.read(PARTY,600))
+        except (ValueError,LiveError):out["party"]=None
+        return out
+    def route_action(self,candidate,meta):
+        if not self.verified_field(candidate,meta):return None
+        route=meta.get("native_route")
+        f,cb,objects=candidate
+        if not route or route.get("map")!=list(f.map_id) or route.get("remaining",0)<=0:return None
+        target=tuple(route["target"])
+        path=find_path(f.pos,target,lambda x,y:f.passable(x,y) and (x,y) not in objects,f.width,f.height)
+        if not path:return None
+        button=path[0].upper();dx,dy=DIR[button]
+        return {"scene":"native_field","objective":"Navigate to "+str(target),"actions":[{"button":button,"frames":1}],"review":False},(f.pos[0]+dx,f.pos[1]+dy)
+    def start_route(self,candidate,meta,target):
+        if not self.verified_field(candidate,meta) or type(target) is not list or len(target)!=2 or any(type(x) is not int for x in target):return False
+        f,cb,objects=candidate
+        if not f.passable(*target) or tuple(target) in objects:return False
+        path=find_path(f.pos,tuple(target),lambda x,y:f.passable(x,y) and (x,y) not in objects,f.width,f.height)
+        if not path:return False
+        meta["native_route"]={"map":list(f.map_id),"target":target,"remaining":min(64,len(path)+2)}
+        return True
+
+def quick_dialogue(rgb,meta):
+    page=ordinary_dialogue(rgb)
+    if not page:return None
+    history=meta.get("history",[])
+    if any(h.get("dialogue_page")==page and h.get("before")==h.get("after") for h in history[-5:]):return None
+    recent=0
+    for h in reversed(history):
+        if h.get("source")!="fast_dialogue":break
+        recent+=1
+    # Periodically require strategic interpretation; never unbounded button spam.
+    if recent>=6:return None
+    return {"scene":"native_dialogue","objective":"Advance recognized ordinary dialogue page","actions":[{"button":"A","frames":5}],"review":False},page
