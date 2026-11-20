@@ -2,6 +2,9 @@ name: Upstream gameplay port
 on:
   push:
     branches: [development/upstream-gameplay-ports]
+  pull_request:
+    branches: [main]
+    paths: ['core/upstream*', 'core/upstream_leafgreen/**', 'tests/test_upstream*', '.github/workflows/upstream-port.yml']
   workflow_dispatch:
 permissions:
   contents: read
