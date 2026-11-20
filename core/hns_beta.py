@@ -10,7 +10,11 @@ from pathlib import Path
 import subprocess
 from core.live import Live, LiveError
 
-A, START = 1, 8
+A, START, R = 1, 8, 256
+# Pinned source: challenge_menu.c enums and ChallengeMenuState ABI.
+TAB_COUNT = 6
+# data/maps/map_groups.json, gMapGroup_IndoorNewBark_Hns[4].
+START_MAP = (1, 4)
 PREFIX = "Task_NewGameHnsSpeech_"
 CHALLENGE = "CB2_InitChallengeMenu"
 
@@ -91,6 +95,84 @@ class Beta:
         self.report["last_state"]={"callback":cb,"tasks":names,"frame":self.frames}
         raise LiveError(f"timed out waiting for {target}")
 
+    def challenge_state(self):
+        # Multiple translation units can have a static sMenu. Identify the
+        # actual challenge menu by its active list task and exact move callback.
+        raw = self.live.read(self.tasks, 40 * 16)
+        dummy = self.address("ListMenuDummyTask") & ~1
+        cursor = self.address("ChallengeMenu_MoveCursorFunc") & ~1
+        candidates = []
+        for symbol in self.syms.get("sMenu", ()):
+            ptr = self.live.integer(symbol, 4)
+            if not 0x02000000 <= ptr <= 0x02040000 - 28:
+                continue
+            data = self.live.read(ptr, 28)
+            tab, task = data[0], data[1]
+            if tab >= TAB_COUNT or task >= 16:
+                continue
+            t = raw[task*40:(task+1)*40]
+            if t[4] != 1 or int.from_bytes(t[:4], "little") & ~1 != dummy:
+                continue
+            if int.from_bytes(t[12:16], "little") & ~1 != cursor:
+                continue
+            # The source cursor callback synchronizes these fields on change.
+            scroll = int.from_bytes(data[4+tab*2:6+tab*2], "little")
+            row = int.from_bytes(data[16+tab*2:18+tab*2], "little")
+            if row >= 5 or scroll + row >= 20:
+                continue
+            candidates.append((ptr, tab, scroll + row))
+        if len(candidates) != 1:
+            raise LiveError("challenge menu state missing or ambiguous")
+        return candidates[0]
+
+    def finish_challenges(self):
+        self.wait("Task_ProcessInput", budget=1800)
+        ptr, tab, row = self.challenge_state()
+        if (tab, row) != (0, 0):
+            raise LiveError("unexpected initial challenge selection")
+        self.note("challenge_default_options_ready")
+        # R selects the next tab, preserving all default choices; on the final
+        # tab R invokes the source's JumpListMenuToBottom + Task_Save path.
+        for expected in range(1, TAB_COUNT):
+            self.tap(R)
+            self.step(0, 12)
+            if self.challenge_state() != (ptr, expected, 0):
+                raise LiveError(f"challenge tab transition failed: {expected}")
+            self.note(f"challenge_tab_{expected}")
+        self.tap(R)
+        self.wait("Task_CallYesOrNoCallback", budget=900)
+        if self.challenge_state() != (ptr, TAB_COUNT-1, 7):
+            raise LiveError("challenge save cursor not on SAVE")
+        self.tap(A)
+        self.wait(PREFIX+"WaitForTextAfterChallengeMenu", budget=2400)
+        self.note("challenge_defaults_confirmed")
+        self.wait("CB2_Overworld", (
+            PREFIX+"WaitForTextAfterChallengeMenu",
+            PREFIX+"WaitForSpriteFadeInAndTextPrinter",
+            PREFIX+"ShrinkPlayer",
+        ), callback=True, budget=12000)
+        # CB2_Overworld alone is insufficient: confirm the matching input
+        # callback and the actual New Bark Town bedroom map from SaveBlock1.
+        self.step(0, 120)
+        if not self.has(self.state(), "CB2_Overworld", True):
+            raise LiveError("overworld not stable")
+        if self.live.integer(self.main, 4) & ~1 != self.address("CB1_Overworld") & ~1:
+            raise LiveError("overworld input callback not installed")
+        save = self.live.integer(self.address("gSaveBlock1Ptr"), 4)
+        if not 0x02000000 <= save <= 0x02040000 - 10:
+            raise LiveError("invalid SaveBlock1 pointer")
+        # global.h: u16 saveVersion, Coords16 pos, WarpData location.
+        raw = self.live.read(save, 10)
+        location = tuple(raw[6:8])
+        if location != START_MAP:
+            raise LiveError(f"unexpected starting map: {location}")
+        x = int.from_bytes(raw[2:4], "little", signed=True)
+        y = int.from_bytes(raw[4:6], "little", signed=True)
+        self.report["overworld"] = {"map_group": location[0], "map_num": location[1],
+                                    "x": x, "y": y}
+        self.note("new_bark_town_bedroom_overworld")
+        self.report["acceptance"] = "starting_overworld_reached"
+
     def execute(self):
         self.wait("Task_TitleScreenPhase3",("Task_CallIntroCallback",
                   "Task_HandleExpansionIntro","Task_TitleScreenPhase1","Task_TitleScreenPhase2"))
@@ -113,8 +195,9 @@ class Beta:
         self.tap(A)
         self.wait(PREFIX+"ProcessNameYesNoMenu",(),budget=12000)
         self.tap(A)
-        self.wait(CHALLENGE,(PREFIX+"WaitPressDisclaimer",),callback=True,budget=12000)
+        self.wait(CHALLENGE,(PREFIX+"WaitDisclaimerText", PREFIX+"WaitPressDisclaimer"),callback=True,budget=12000)
         self.report["acceptance"]="challenge_setup_reached"
+        self.finish_challenges()
         self.report["full_campaign_complete"]=False
 
 def main():
@@ -129,7 +212,7 @@ def main():
         with Live(a.runner,a.rom,report["rom_sha256"]) as live:
             beta=Beta(live,symbols(a.elf),report)
             beta.execute()
-        print("HNS BETA PASS: challenge setup reached; not a full campaign")
+        print("HNS BETA PASS: starting overworld reached; not a full campaign")
     except Exception as e:
         report["failure"]=str(e)
         raise
