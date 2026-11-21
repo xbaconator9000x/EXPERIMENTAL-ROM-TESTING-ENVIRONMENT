@@ -84,7 +84,10 @@ class SkillTransport(ReadOnlyClient):
         advanced=0
         while advanced<max_frames:
             n=min(4,max_frames-advanced)
-            self.tick(n);advanced+=n
+            # tick() adds eight release frames, so using it here silently
+            # exceeds the caller's wait budget. Idle polling must advance
+            # exactly the requested number of frames.
+            self._advance(0,n);advanced+=n
             frame=self.live.rgb()
             if not isinstance(frame,bytes) or len(frame)!=240*160*3:
                 raise SkillAbort("invalid native RGB frame")
