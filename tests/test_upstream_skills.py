@@ -63,7 +63,10 @@ class SkillTests(unittest.TestCase):
         self.assertEqual(t.frames,20)
 
     def test_idle_detection_rejects_malformed_native_frame(self):
-        t=SkillTransport(Fixture());t.start()
+        class ShortFrame(Fixture):
+            def rgb(self):
+                return bytes(100)
+        t=SkillTransport(ShortFrame());t.start()
         with self.assertRaises(SkillAbort):
             t.wait_until_idle(max_frames=4,stable=4)
 
