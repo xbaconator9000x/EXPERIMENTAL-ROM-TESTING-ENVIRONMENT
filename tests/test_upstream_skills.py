@@ -47,6 +47,34 @@ class SkillTests(unittest.TestCase):
         t=SkillTransport(f,should_stop=lambda:True)
         with self.assertRaises(SkillAbort):t.tap("A")
         self.assertEqual(f.steps,[])
+    def test_idle_detection_observes_pixels_between_old_stride_samples(self):
+        class ChangingFrame(Fixture):
+            def __init__(self):
+                super().__init__()
+                self.index=0
+            def rgb(self):
+                # Pixel byte 1 was invisible to the former [::311] sampler.
+                self.index+=1
+                b=bytearray(240*160*3)
+                b[1]=self.index
+                return bytes(b)
+        f=ChangingFrame();t=SkillTransport(f);t.start()
+        self.assertFalse(t.wait_until_idle(max_frames=20,stable=8))
+        self.assertEqual(t.frames,20)
+
+    def test_idle_detection_rejects_malformed_native_frame(self):
+        t=SkillTransport(Fixture());t.start()
+        with self.assertRaises(SkillAbort):
+            t.wait_until_idle(max_frames=4,stable=4)
+
+    def test_idle_detection_accepts_stable_full_frame(self):
+        class StableFrame(Fixture):
+            def rgb(self):
+                return bytes(240*160*3)
+        t=SkillTransport(StableFrame());t.start()
+        self.assertTrue(t.wait_until_idle(max_frames=16,stable=8))
+        self.assertEqual(t.frames,12)
+
     def test_tool_allowlist(self):
         self.assertEqual(validate_tool("use_move",{"move":"Tackle"})[0],"use_move")
         self.assertEqual(validate_tool("shop",{"item":"Potion","quantity":3})[0],"shop")
