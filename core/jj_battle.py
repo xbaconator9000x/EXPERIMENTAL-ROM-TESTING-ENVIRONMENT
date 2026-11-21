@@ -10,7 +10,8 @@ from core.jj_fast import SHA, MAIN, PARTY, BATTLE, CTRL, SAVE_PTR, decode_party,
 from core.firered import span
 from core.rom_catalog import TYPES
 from core.live import LiveError
-from core.gameplay import cursor_action, effectiveness
+from core.gameplay import cursor_action
+from core.upstream_battle import classic_multiplier, safe_damage_kind, catch_setup_slot
 
 BATTLE_CB=0x08011101
 ACTION_CURSOR=0x02023FF8
@@ -84,7 +85,9 @@ def move_rank(own,enemy,rows,disabled=0,capture=False):
         if not mid or not own["pp"][slot] or mid==disabled:continue
         row=rows.get(mid)
         if not row or not row["power"] or row["power"]==1:continue
-        mult=effectiveness(row["type"],enemy["types"])
+        kind=safe_damage_kind(row,enemy["status"],capture)
+        if kind is None:continue
+        mult=classic_multiplier(row["type"],enemy["types"])
         if not mult:continue
         physical=row["type"] in ("normal","fighting","flying","poison","ground","rock","bug","ghost","steel")
         ai,di=(0,1) if physical else (3,4)
@@ -98,9 +101,9 @@ def move_rank(own,enemy,rows,disabled=0,capture=False):
         if capture:
             # Leave margin for damage variation and critical hits. If no safe
             # damaging attack exists, caller should use the bag or vision.
-            if est*2.1>=enemy["hp"]:continue
+            if kind!="false_swipe" and est*2.1>=enemy["hp"]:continue
             quality=est*row["accuracy"]/100
-        else:quality=est*row["accuracy"]/100
+        else:quality=est*row["accuracy"]/100*(.5 if kind in ("charge","semi_inv","recharge") else 1)
         candidates.append((quality,-slot,slot))
     return max(candidates)[2] if candidates else None
 
@@ -162,6 +165,9 @@ class BattleAdapter:
         # throw at trainers, use a Master Ball, or deliberately farm captures.
         capture=state["wild"] and balls>0 and len(state["party"])<3 and not any(p["species_id"]==enemy["species"] for p in state["party"])
         safe=move_rank(own,enemy,rows,state["disabled"],capture)
+        if capture and health_percent(enemy)>35 and not enemy["status"]:
+            setup=catch_setup_slot(own,enemy,rows,state["disabled"])
+            if setup is not None:safe=setup
         heal=health_percent(own)<=25 and healing>0
         throw=capture and (health_percent(enemy)<=35 or enemy["status"]!=0 or safe is None)
         if state["stage"]=="battle_command":

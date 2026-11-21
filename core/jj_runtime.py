@@ -8,7 +8,12 @@ NATIVE={"fast_dialogue","native_route","native_explore","native_battle","native_
 def animation_wait(live,battles,battle,meta):
     # No button press, no assumed text advance. Only a validated battle
     # dispatcher immediately after an input we actually issued.
-    if battle or BATTLE_CB not in battles.callbacks:return None
+    p=getattr(battles,"p",None)
+    battle_cb=p.battle_cb if p else BATTLE_CB
+    main=p.main if p else MAIN
+    flags=p.flags if p else FLAGS
+    admitted_flags=(4,12,20,28) if p else (4,12)
+    if battle or battle_cb not in battles.callbacks:return None
     if not meta.get("battle_proof"):return None
     history=meta.get("history",[])
     recent=0
@@ -20,7 +25,7 @@ def animation_wait(live,battles,battle,meta):
     if last.get("source") not in ("native_battle","native_menu"):return None
     if not any(a.get("button") in ("A","B") for a in last.get("actions",[])):return None
     try:
-        if live.integer(MAIN+4,4)!=BATTLE_CB or live.integer(FLAGS,4) not in (4,12):return None
+        if live.integer(main+4,4)!=battle_cb or live.integer(flags,4) not in admitted_flags:return None
     except LiveError:return None
     return {"scene":"battle_transition","objective":"Allow native battle animation to complete","actions":[{"button":"WAIT","frames":120}],"review":False}
 

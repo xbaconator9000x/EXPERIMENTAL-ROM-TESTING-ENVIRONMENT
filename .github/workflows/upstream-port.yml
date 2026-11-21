@@ -1,0 +1,46 @@
+name: Upstream gameplay port
+on:
+  push:
+    branches: [development/upstream-gameplay-ports]
+  pull_request:
+    branches: [main]
+    paths: ['core/upstream*', 'core/upstream_leafgreen/**', 'tests/test_upstream*', '.github/workflows/upstream-port.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  upstream:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/checkout@v4
+        with:
+          repository: haggyroth/pokemon-agent
+          ref: 594bfc7e3c208890c248269b67c5a1cf95074965
+          path: upstream-source
+      - name: Install upstream Python skill dependencies
+        run: python -m pip install requests openai rich python-dotenv
+      - name: Confirm actual upstream dispatcher imports
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = (Resolve-Path upstream-source)
+          python -c "from agent.lm_studio_client import AgentClient; assert callable(AgentClient._execute)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item Env:PYTHONPATH
+      - name: Verify installer parses and includes all upstream modules
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path windows/install_autoplay.ps1), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { $errors | Format-List; throw "Installer parse failed" }
+          $source = Get-Content windows/install_autoplay.ps1 -Raw
+          foreach ($file in (Get-ChildItem core/upstream*.py,core/upstream_leafgreen/*.py,tests/test_upstream*.py)) {
+              $rel = $file.FullName.Substring((Get-Location).Path.Length+1).Replace([char]92,[char]47)
+              if (!$source.Contains("'$rel'")) { throw "Missing upstream installer entry: $rel" }
+          }
+      - name: Run all host and upstream tests
+        run: python -m unittest discover -s tests -p "test_*.py" -v

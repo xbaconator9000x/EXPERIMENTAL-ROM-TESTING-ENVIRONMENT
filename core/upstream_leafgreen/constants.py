@@ -1,0 +1,596 @@
+class Addr:
+    # Party — read with /core/readrange
+    # Note: PARTY_DATA confirmed at 0x02024284 by live decryption (Bulbasaur L6, Tackle+Growl).
+    # There is no reliable separate party-count address; use level>0 at slot offset 0x54 instead.
+    PARTY_DATA   = 0x02024284   # gPlayerParty: 600 bytes, 6 × 100-byte structs
+    # gEnemyParty — same struct as gPlayerParty, 600 bytes immediately before it.
+    # Fixed global (NOT DMA-relocated). slot 0 = the wild mon / trainer's active
+    # lead. Verified live: (0x02024284 - 600) decodes to the wild encounter.
+    ENEMY_PARTY  = 0x0202402C
+    # gMoveSelectionCursor[gActiveBattler] — the FIGHT move-selection slot (0-3,
+    # 2×2 grid: bit0=column, bit1=row). On A the game commits THIS value as the
+    # chosen move (per pokefirered HandleInputChooseMove), so use_move writes the
+    # target slot here then presses A. Verified live: writing it + an A edge, then
+    # letting the turn resolve, drops exactly that move's PP. Single-battle scope
+    # (player = battler 0). NOTE: the display var 4 bytes earlier (0x02023FF8) is
+    # NOT the one A reads — must use this address.
+    MOVE_CURSOR  = 0x02023FFC
+    # gActionSelectionCursor[0] — the FIGHT/BAG/POKEMON/RUN action menu cursor,
+    # the u8 array adjacent to the move cursor (this is the "red herring" seen
+    # during use_move RE — it's the ACTION cursor, not the move one). Indices:
+    # 0=FIGHT 1=BAG 2=POKEMON 3=RUN. flee_battle writes 3 then presses A.
+    ACTION_CURSOR = 0x02023FF8
+    ACTION_RUN     = 3
+    ACTION_POKEMON = 2   # gActionSelectionCursor value for POKEMON (switch)
+    # gBattleMons[0].species (u16) — the PLAYER's ACTIVE battler's live species.
+    # Derived live: it changes Bulbasaur(1)→Weedle(13) the instant an in-battle switch
+    # completes, so switch_pokemon confirms success by this becoming the target's
+    # species (the party array order is unchanged by a switch, so read_party can't see
+    # it). gBattleMons[0] base; species at struct offset 0.
+    BATTLE_MON0_SPECIES = 0x02023BE4
+    # gDisableStructs[4] (0x1C each): +4 u16 disabledMove, +0xB low nibble disableTimer (turns left).
+    # Found live by forcing a foe to use Disable and diffing EWRAM (Tackle=33 appeared at +4, the
+    # timer counted 5→0 then the field cleared).
+    BATTLE_MON_STATUS2 = 0x50          # u32 within a BattlePokemon (gBattleMons[n] at BATTLE_MON0_SPECIES + 0x58*n)
+    DISABLE_STRUCTS = 0x02023E0C
+    DISABLE_STRUCT_SIZE = 0x1C
+    # Live cursor (slotId) in the in-battle party menu, 0-based over party slots.
+    # Derived live: steps 0→1 on Down, back on Up. switch_pokemon navigates it to the
+    # target slot before selecting.
+    # (UNRELIABLE with 3+ mons — it read 0/1/0 while the real cursor went 0/1/2; use PARTY_FIELD_SLOT
+    # 0x0203B0A9, gPartyMenu.slotId, which is also what the in-battle party screen uses.)
+    # gBattlePartyCurrentOrder — packed nibbles mapping each in-battle party-menu
+    # DISPLAY slot to a field party id (slot even → high nibble, odd → low nibble of
+    # byte slot//2). Identity [01 23 45] at battle start; a switch permutes it, so the
+    # menu lists mons in BATTLE order, not field order. switch_pokemon uses this to
+    # translate a field slot → its on-screen slot (else a 2nd switch lands on the active
+    # mon and the game rejects it as "already in battle"). Derived live (#120).
+    BATTLE_PARTY_ORDER  = 0x0203B0DC
+    # gBattlerControllerFuncs[0] — player battler's controller callback. Equals
+    # CTRL_CHOOSE_MOVE while the FIGHT move menu is open, CTRL_CHOOSE_ACTION while
+    # the FIGHT/BAG/POKEMON/RUN action menu is open (both live-verified).
+    BATTLE_CTRL_FUNC   = 0x03004FE0
+    CTRL_CHOOSE_MOVE   = 0x0802EA11   # HandleInputChooseMove — move menu is up
+    CTRL_CHOOSE_ACTION = 0x08030611   # HandleInputChooseAction — action menu (turn 1)
+    # The action-menu controller value VARIES by turn: 0x08030611 on the first
+    # action, 0x0802E439 on later turns (live-verified). Both mean "the FIGHT/BAG/
+    # POKEMON/RUN menu is up and waiting for input".
+    CTRL_CHOOSE_ACTION_ALT = 0x0802E439
+    # gMain.callback2 while a slot machine is on screen (CB2_RunSlotMachine; live-verified). Its game state is a heap block, found
+    # at run time by the spinning pattern (see GameCornerMixin._slot_state_addr).
+    CB2_SLOT_MACHINE = 0x0813F925
+    # Safari Zone battles have their own controller (battle_controller_safari.c): its HandleInputChooseAction is up while the
+    # BALL / BAIT / GO NEAR / RUN menu waits (live-verified). The 2x2 menu cursor (ACTION_CURSOR): 0 BALL, 1 BAIT, 2 GO NEAR
+    # (throw a rock), 3 RUN.
+    CTRL_SAFARI_ACTION = 0x080DD739
+    # …and on every later turn the menu is the same function under another value (like the normal battle's ALT), seen while it
+    # waited for input; A pressed there re-commits the cursor, so BOTH count as "the menu is up".
+    CTRL_SAFARI_ACTION_ALT = 0x080DD57D
+    SAFARI_MENU = (CTRL_SAFARI_ACTION, CTRL_SAFARI_ACTION_ALT)
+    SAFARI_CURSOR = {"ball": 0, "bait": 1, "rock": 2, "run": 3}
+    # gNumSafariBalls (u8) and gSafariZoneStepCounter (u16): EnterSafariMode sets 30 / 600 (live: found by scanning EWRAM for
+    # that pair right after paying the entrance fee). Both read 0 outside the Safari Zone.
+    SAFARI_BALLS = 0x02039994
+    SAFARI_STEPS = 0x02039996
+    # gBattleOutcome (u8) — 0 during battle, set at the end: 1=WON, 4=RAN(fled),
+    # 6=enemy fled, 7=CAUGHT. Derived + verified live (0 in-battle, 4 after flee).
+    # The definitive "was it caught?" signal (party count lags; action-menu value
+    # varies), used by catch().
+    BATTLE_OUTCOME     = 0x02023E8A
+    B_OUTCOME_WON      = 1   # gBattleOutcome after the player wins
+    B_OUTCOME_LOST     = 2   # player lost (party about to white out)
+    B_OUTCOME_DREW     = 3   # draw (both sides down)
+    B_OUTCOME_RAN      = 4   # the player ran away
+    B_OUTCOME_PLAYER_TELEPORTED = 5
+    B_OUTCOME_MON_FLED = 6   # the wild Pokémon ran away
+    B_OUTCOME_CAUGHT   = 7
+    B_OUTCOME_MON_TELEPORTED = 8
+    # gMoveToLearn (u16) — the move the game is offering the lead on a level-up, set
+    # while the "Delete a move to make room?" prompt is up. Derived + verified live
+    # (=77 Poison Powder at Bulbasaur's L15 prompt). Stale between prompts (holds the
+    # last learned move), so treat it as a real prompt only when it's a valid move id
+    # the lead does NOT already know. 0 handling is caller-side.
+    MOVE_TO_LEARN      = 0x02024022
+    # gBattleScripting.learnMoveState (u8) — the level-up move-learn state machine.
+    # Derived + verified live: 0 in a normal battle; 1 ("Delete a move?" box, waiting
+    # for input) → 2 (YES chosen, opening summary) → 3 (forget summary) → 4 (exit).
+    # CAUTION: like gMoveToLearn it LINGERS — it holds its last value (3/4) back in the
+    # overworld, so it is NOT a standalone "prompt active" gate. The driver only treats
+    # ==1 while cb2==CB2_BATTLE (and a valid gMoveToLearn) as a LIVE delete box, and
+    # terminates on the battle's own state (action menu / overworld), never on this
+    # value going 0. See memory battle-menu-re.md for the full deep-dive.
+    LEARN_MOVE_STATE   = 0x02023FE3
+
+    # Progress. Badges live in gSaveBlock1, which the game DMA-RELOCATES on every
+    # map transition (verified live: base 0x202554c indoors → 0x20255a8 outdoors).
+    # So the badge byte must be read via the live pointer (deref SAVEBLOCK1_PTR +
+    # BADGES_OFFSET), NOT a fixed address — a fixed read drifts off the byte after
+    # a warp and returns a neighbouring byte, which caused phantom badges.
+    #
+    # BADGES_OFFSET derivation (pokefirered global.h + constants/flags.h): badges
+    # are SYS_FLAGS, stored in SaveBlock1.flags[] at struct offset 0xEE0.
+    # FLAG_BADGE01_GET = SYS_FLAGS(0x800)+0x20 = 0x820, so the badge byte is
+    # flags[0x820>>3] = 0xEE0 + 0x104 = 0xFE4, bit0=Boulder..bit7=Earth. (The old
+    # 0x41C was wrong — it landed in the bag-items region, so read_badges returned
+    # bag data and NO run ever registered a badge. Cross-checked: key items at
+    # +0x3B8 matches this same struct base, confirming the offset frame.)
+    BADGES_OFFSET = 0xFE4       # + [SAVEBLOCK1_PTR] → badge bitmask (relocation-safe)
+    # Bit order: bit 0=Brock, 1=Misty, 2=Surge, 3=Erika,
+    #            4=Koga, 5=Sabrina, 6=Blaine, 7=Giovanni
+
+    # Context detection — verified live via in-process libmgba (fix/detect-context).
+    #
+    #   gMain.callback2 (0x030030F4) u32 — the game's live "current screen"
+    #   dispatcher, and the authoritative context gate:
+    #     == CB2_OVERWORLD (0x080565B5) while the field system runs (free-roam,
+    #        on-map dialog/scripts, field fades). Returns to this value when a
+    #        battle ends — unlike the old flags, which persist after battle.
+    #     == CB2_BATTLE    (0x08011101) for essentially the whole battle.
+    #   SCREEN_FADE (0x03000F9C) u8: 1 while a menu is on screen OR during a fade;
+    #     0 in plain free-roam. This is the reliable "something is over the field
+    #     right now" signal — crucially it returns to 0 the instant a menu closes.
+    #   MENU_OPEN   (0x03002415) u8: set when a field menu is/was open. It
+    #     OVER-STAYS: after a full-screen menu (Pokédex/Bag/…) closes it can read 1
+    #     back on the field. So it must never be used alone (that trapped the agent
+    #     in a phantom IN_MENU) — pair it with SCREEN_FADE, which does clear.
+    #   SCRIPT_RAM  (0x03000EB0): script-engine block; byte[0] != 0 while a map
+    #     script runs (NPC dialog, signs, cutscenes), 0 in free-roam.
+    #
+    # detect_context():
+    #   callback2 == CB2_BATTLE                        -> IN_BATTLE
+    #   callback2 == CB2_OVERWORLD:                    (field: overlay menu/fade/dialog/roam)
+    #       MENU_OPEN and SCREEN_FADE                  -> IN_MENU (Start/Save overlay)
+    #       SCREEN_FADE                                -> TRANSITIONING (warp/map fade)
+    #       SCRIPT_RAM[0] != 0                         -> DIALOG_OPEN
+    #       else                                       -> OVERWORLD (stale MENU_OPEN lands here)
+    #   otherwise:                                     (full-screen menu / warp / intro)
+    #       MENU_OPEN                                  -> IN_MENU (Pokédex/Party/Bag/Option/…)
+    #       else                                       -> TRANSITIONING
+    #
+    # ROM-version note: the CB2_* target addresses are specific to this LeafGreen
+    # build (as are all addresses here); re-derive if OVERWORLD is misdetected.
+    GMAIN_CALLBACK2 = 0x030030F4   # u32: gMain.callback2 — live screen dispatcher
+    CB2_OVERWORLD   = 0x080565B5   # callback2 value while the field system is active
+    CB2_BATTLE      = 0x08011101   # callback2 value during battle
+    # Post-battle evolution scene (CB2_EvolutionSceneUpdate). Present ONLY while a mon
+    # is evolving — a normal battle end goes straight to CB2_OVERWORLD (verified live).
+    # The scene flickers between TRANSITIONING and IN_MENU, so the agent kept dismissing
+    # it with B (which CANCELS the evolution). Advance it with A instead. Derived live.
+    CB2_EVOLUTION   = 0x080CE6E5
+    # Field "Start menu" state (live-verified via RAM diffing; EWRAM statics in start_menu.c):
+    #   START_MENU_CURSOR  u8 sStartMenuCursorPos — highlighted row (persists after close)
+    #   START_MENU_COUNT   u8 sNumStartMenuItems
+    #   START_MENU_ORDER   u8[] sStartMenuOrder — row → action id (see START_MENU_NAMES)
+    START_MENU_CURSOR = 0x020370F4
+    START_MENU_COUNT  = 0x020370F5
+    START_MENU_ORDER  = 0x020370F6
+    # sMenu.cursorPos — the generic small-menu cursor (Yes/No box 0=YES 1=NO, Save
+    # prompt, context menus). Clamps at the ends. STALE after the menu closes, so
+    # only trust it while an interactivity probe (game/menu.py) says a menu is live.
+    MENU_CURSOR       = 0x0203ADE6
+    # Naming screen (nickname after a catch, player/rival name). Live-verified by RAM diffing:
+    #   NAMING_CB2        gMain.callback2 while the keyboard is up (CB2_NamingScreen)
+    #   NAMING_TEXT       u8[] textBuffer, Gen III chars, 0xFF-filled when empty (heap — validated
+    #                     at runtime before use)
+    #   NAMING_CURSOR_X/Y u16 cursor key column/row on the sprite (button column = column count)
+    #   BATTLE_YESNO_CURSOR  u8 battle Yes/No box cursor (nickname prompt): 0=YES 1=NO
+    # CB2_UpdatePartyMenu — the party screen (field Pokémon menu AND the in-battle switch screen,
+    # including the FORCED one after your lead faints, which B cannot cancel).
+    CB2_PARTY_MENU     = 0x0811EB79
+    NAMING_CB2         = 0x0809FB45
+    NAMING_TEXT        = 0x0200FF34
+    NAMING_PAGE        = NAMING_TEXT + 0x622    # u8 currentPage in struct NamingScreenData (textBuffer is at +0x1800, currentPage at +0x1E22): 0 symbols, 1 UPPER, 2 lower
+    NAMING_CURSOR_X    = 0x0202066A
+    NAMING_CURSOR_Y    = 0x0202066C
+    BATTLE_YESNO_CURSOR = 0x02023E83
+    # gBattlescriptCurrInstr, and the address of the `yesnobox` command in the trainer's "<X> is about to use <Y>! Will you change POKéMON?" script
+    # (BattleScript_FaintedMonTryChoose, found by scanning the US v1.0 ROM for printstring 282 / setbyte gBattleCommunication 0 / yesnobox). While the
+    # pointer sits there the Yes/No box is up: A = YES (opens an optional party screen = a free switch), B = NO. Only exists in Battle Style SHIFT.
+    BATTLE_SCRIPT_PTR   = 0x02023D74
+    SCRIPT_SHIFT_PROMPT = 0x081D872B
+    SCREEN_FADE     = 0x03000F9C   # u8: 1 while a menu is on screen OR mid-fade; clears when the menu closes
+    SCRIPT_RAM      = 0x03000EB0   # script-engine block; byte[0] != 0 = map script running
+    # Field-menu flag. Non-zero for EVERY field menu (Start, Bag, Party, Trainer
+    # Card, Option, Save, Pokédex, …). BUT it OVER-STAYS: after a full-screen menu
+    # closes it can still read 1 back on the field, so it is NOT a standalone gate
+    # — detect_context() pairs it with SCREEN_FADE (which does clear) to avoid a
+    # phantom IN_MENU. Never under-reports (always 1 while a menu is truly open).
+    MENU_OPEN       = 0x03002415
+
+    # gBattleTypeFlags (real one) — set at battle init, persists after. Verified
+    # live: wild = 0x04 (IS_MASTER), trainer = 0x0C (IS_MASTER | TRAINER). Read at
+    # battle START to classify the battle. Bit values per pokefirered.
+    # gSaveCounter (save.c): +1 for every successful in-game save. Found by diffing EWRAM across two saves (a single u32 rose by
+    # exactly 1 each time); the only way to CONFIRM a cartridge save, since the screen text is not readable.
+    SAVE_COUNTER        = 0x0203AA34
+    BATTLE_TYPE_FLAGS   = 0x02022B4C
+    BATTLE_TYPE_DOUBLE = 0x01    # gBattleTypeFlags & this != 0 → two Pokémon a side (Victory Road 3F's Ray & Tyra)
+    BATTLE_TYPE_TRAINER = 0x08   # gBattleTypeFlags & this != 0 → a trainer battle
+    BATTLE_TYPE_SAFARI  = 0x80   # …and this one → a Safari Zone battle (BALL / BAIT / GO NEAR / RUN, no party or bag)
+
+    # Bag key-items pocket, inside gSaveBlock1 (deref SAVEBLOCK1_PTR — the block
+    # is DMA-relocated, so always re-read the pointer). 30 slots × 4 bytes
+    # (u16 item id + u16 encrypted qty); item IDs are cleartext, id 0 = empty.
+    # Verified live: receiving the Town Map (id 361) filled a new slot here.
+    SAVEBLOCK1_PTR   = 0x03005008
+    KEY_ITEMS_OFFSET = 0x03B8
+    KEY_ITEMS_SLOTS  = 30
+
+    # Money + consumable bag pockets, inside gSaveBlock1 (deref SAVEBLOCK1_PTR).
+    # FRLG XOR-obfuscates money and item QUANTITIES with gSaveBlock2->encryptionKey
+    # (money ^ key32; quantity ^ (key & 0xFFFF)); item IDs are cleartext, id 0 =
+    # empty. gSaveBlock2Ptr is the pointer right after gSaveBlock1Ptr. All offsets
+    # and the pointer derived + verified live (money=$3080, 5 Poké Balls) against
+    # the pokefirered global.h struct.
+    SAVEBLOCK2_PTR       = 0x0300500C   # deref → gSaveBlock2
+    ENCRYPTION_KEY_OFFSET = 0xF20       # + [SAVEBLOCK2_PTR] → u32 XOR key
+    MONEY_OFFSET         = 0x290        # + [SAVEBLOCK1_PTR] → u32 money ^ key
+    COINS_OFFSET         = 0x294        # + [SAVEBLOCK1_PTR] → u16 Game Corner coins ^ (key & 0xFFFF)
+    ITEMS_OFFSET         = 0x310        # Items pocket (42 slots × 4 bytes)
+    ITEMS_SLOTS          = 42
+    BALLS_OFFSET         = 0x430        # Poké Balls pocket (13 slots × 4 bytes)
+    BALLS_SLOTS          = 13
+
+    # Poké Mart buy menu — sShopData (static in shop.c). Derived + verified live at
+    # the Viridian Mart (itemList=[4,13,14,18], itemCount=4). Fields (struct ShopData):
+    #   +0x04 const u16* itemList   (ROM ptr to the mart's item ids)
+    #   +0x08 u32 itemPrice         (unit price × current quantity in the qty selector)
+    #   +0x0C u16 selectedRow       (highlighted row within the visible window)
+    #   +0x0E u16 scrollOffset      (list scroll; highlighted index = scroll + row)
+    #   +0x10 u16 itemCount         (number of items the mart sells)
+    #   +0x14 u16 maxQuantity       (most you can afford of the selected item)
+    SHOP_DATA          = 0x02039934
+    SHOP_ITEMLIST      = 0x04
+    SHOP_ITEMPRICE     = 0x08
+    SHOP_SELROW        = 0x0C
+    SHOP_SCROLL        = 0x0E
+    SHOP_ITEMCOUNT     = 0x10
+    SHOP_MAXQTY        = 0x14
+
+    # In-battle Bag menu — gBagMenuState (static struct BagStruct in item_menu.c).
+    # Derived + verified live (bagOpen=1, pocket flips on Right). The battle bag is
+    # opened from the action menu by selecting BAG (action cursor = 1) with the same
+    # write-cursor+A method as flee_battle; it hands off across a controller handshake,
+    # so cb2 leaves CB2_BATTLE (→ IN_MENU) once it's up. Fields (struct BagStruct):
+    #   +0x04 u8 location   (5 = ITEMMENULOCATION_BATTLE)
+    #   +0x05 u8 bagOpen
+    #   +0x06 u16 pocket    (0=Items, 1=Key Items, 2=Poké Balls)
+    #   +0x0E u16 cursorPos[3]
+    BAG_MENU_STATE     = 0x0203ACFC
+    BAG_LOCATION_OFF   = 0x04
+    BAG_POCKET_OFF     = 0x06
+    BAG_POCKET_ITEMS   = 0
+    BAG_POCKET_BALLS   = 2
+    ACTION_BAG         = 1     # gActionSelectionCursor value for BAG
+    # Live highlighted row in the open Bag's item list (0-based). Derived live: it
+    # steps 0→1 on Down, back on Up. Lets use_item navigate to a specific item by its
+    # position in the pocket. (It's the on-screen cursor row; for a short list — no
+    # scroll — that equals the item's index in the pocket, which covers early game.)
+    # Bag list position = scroll + cursor. BAG_LIST_CURSOR is the highlighted ROW within the visible
+    # window (it stops at row 3 and the list scrolls); BAG_LIST_SCROLL (itemsAbove) counts rows
+    # scrolled off the top. The absolute list index is the SUM — using the cursor alone selected the
+    # wrong item once a pocket had more than ~6 entries (live-verified).
+    BAG_LIST_SCROLL    = 0x0203AD0A
+    BAG_LIST_CURSOR    = 0x0203AD04
+    # gPartyMenu.slotId on the FIELD party screen (item-use / switch / HM-use target pick),
+    # 0-based over party slots (live-verified by RAM diff). Cancel sits after the last mon.
+    PARTY_FIELD_SLOT   = 0x0203B0A9
+    SUMMARY_MOVE_CURSOR = 0x0203B16D   # 'KNOWN MOVES' summary during a level-up delete: 0-3 = moves, 4 = the new move
+    # TM Case (key item 364 -> OPEN). Live-verified by RAM diffing / screenshots:
+    #   TMCASE_CB2     gMain.callback2 while the case UI is up; TMCASE_ROW / TMCASE_SCROLL the
+    #                  highlighted row and the scroll offset (absolute list index = scroll + row)
+    #   SUMMARY_CB2    the move-summary screen shown to pick the move to forget;
+    #                  SUMMARY_MOVE_CURSOR 0..3 = existing moves, 4 = the new move (gives up)
+    #   Bag pocket p keeps its list cursor/scroll at BAG_LIST_CURSOR/SCROLL + 2*p (gBagPosition arrays).
+    # Region map (Fly): the cursor is a sprite, 8 px per grid cell (22 x 15), moved one cell by a 1-4
+    # frame D-pad hold. Sprite pixel pos is readable; cell = (px - corner_px) / 8 after clamping to
+    # the top-left. Live-verified.
+    REGIONMAP_CB2      = 0x080C0889
+    FLYMAP_CURSOR_X    = 0x0202063E     # low 9 bits (attr1)
+    FLYMAP_CURSOR_Y    = 0x0202063C     # low 8 bits (attr0)
+    VARS_OFFSET        = 0x1000         # + [SAVEBLOCK1_PTR]; var n (≥0x4000) = u16 at index n-0x4000
+    POKEMON_STORAGE_PTR = 0x03005010    # gPokemonStoragePtr -> PokemonStorage (currentBox u8; boxes[14][30] x 80 bytes)
+    # PC storage screen (live-found, this ROM). gMain.callback2 while the screen is up; the cursor lives in
+    # two bytes: area (0 box grid, 1 party panel, 2 box title, 3 top buttons) and position (grid 0-29 = col + 6·row,
+    # buttons 0 = PARTY POKéMON / 1 = CLOSE BOX, party panel = slot).
+    STORAGE_CB2        = 0x0808CD99
+    STORAGE_CURSOR_AREA = 0x02039820
+    STORAGE_CURSOR_POS = 0x02039821
+    MB_PC              = 0x83           # metatile behavior of the Pokémon Center PC tile
+    SAVEBLOCK2_PTR     = 0x0300500C     # gSaveBlock2Ptr (pokedex lives at +0x18)
+    DEX_OWNED_OFFSET   = 0x28           # SaveBlock2 + 0x18 + 0x10 : u8 owned[52]
+    DEX_SEEN_OFFSET    = 0x5C           # SaveBlock2 + 0x18 + 0x44 : u8 seen[52]
+    FLAGS_OFFSET       = 0xEE0          # + [SAVEBLOCK1_PTR]; flag n = byte n>>3, bit n&7
+    FLAG_SYS_FLASH_ACTIVE = 0x806
+    # gBackupMapLayout (IWRAM): the LIVE, EWRAM copy of the map that the game edits when a door opens or
+    # a switch flips (Silph card-key doors, Pokémon Mansion). {s32 width+15, s32 height+14, u16* map};
+    # tile (x, y) is at map + ((y+7)*(width+15) + (x+7))*2. The ROM layout never changes, so reading it
+    # showed opened doors as walls forever. Live-verified (row 0 equals ROM on a fresh map).
+    BACKUP_MAP_LAYOUT  = 0x03005040
+    BAG_CB2            = 0x08107EB9
+    # Full-screen menus a stray A would SELECT things in (use an item, teach a TM...): back out with B.
+    FULLSCREEN_MENU_CB2 = (0x08107EB9, 0x0811EB79, 0x08137EC1, 0x0813183D, 0x080C0889)
+    TM_CASE_ITEM       = 364
+    TMHM_OFFSET        = 0x464          # + [SAVEBLOCK1_PTR]: 58 slots (TM01-50, HM01-08), ItemSlot x4 B
+    TMHM_SLOTS         = 58
+    TMCASE_CB2         = 0x0813183D
+    TMCASE_ROW         = 0x0203B114
+    TMCASE_SCROLL      = 0x0203B116
+    SUMMARY_CB2        = 0x08137EC1
+    SUMMARY_MOVE_CURSOR = 0x0203B16D
+    BAG_POCKET_KEYITEMS = 1
+
+
+    # Map header — DataCrystal: "Current Map Header 0x02036DFC"
+    # The struct MapHeader sits directly at this address (not a pointer to it).
+    # First 4 bytes are the mapLayout ROM pointer (0x08xxxxxx).
+    MAP_HEADER   = 0x02036DFC   # struct MapHeader in EWRAM
+
+    # ⚠ These absolute addresses are the PARENT OUTDOOR map, NOT the current map:
+    # they stay on the town (e.g. Pallet 3/0) the whole time you are inside its
+    # buildings, so they misreport every interior. Verified live: reads 3/0 in
+    # both the player's bedroom and Pallet Town. Kept only for diagnostics — the
+    # current map comes from the DMA block below (read_current_map). Do not use
+    # these for context/navigation.
+    MAP_BANK     = 0x02031DBC   # u8: parent outdoor map bank (stale for interiors)
+    MAP_ID       = 0x02031DBD   # u8: parent outdoor map id  (stale for interiors)
+
+    # Live player tile coordinates AND current map — always indirect; the target
+    # block is DMA-protected and its address changes on every map transition.
+    # DataCrystal RAM map, relative to [PLAYER_PTR]:
+    #   +0x000 = Camera X (2b) = player tile X
+    #   +0x002 = Camera Y (2b) = player tile Y
+    #   +0x004 = current map GROUP (1b)  — matches the first key in MAP_NAMES
+    #   +0x005 = current map NUM   (1b)  — matches the second key in MAP_NAMES
+    # read_player_pos(): ptr=read32(PLAYER_PTR); x=read16(ptr); y=read16(ptr+2).
+    # read_current_map(): (read8(ptr+0x04), read8(ptr+0x05)) — the TRUE current
+    # map, e.g. (3,0) Pallet Town outdoors vs (4,2) the player's house indoors.
+    # DO NOT cache or store the resolved address — it drifts.
+    PLAYER_PTR       = 0x03005008   # IRAM → DMA-protected map data block
+    MAP_GROUP_OFFSET = 0x04         # + [PLAYER_PTR] → current map group (bank)
+    MAP_NUM_OFFSET   = 0x05         # + [PLAYER_PTR] → current map number (id)
+
+    # Player sprite object (overworld, 36 bytes). Player is always OW slot 0.
+    # Offsets within OW struct (from pokefirered decomp / DataCrystal):
+    #   +0x1C, +0x20 = sub-tile pixel offsets (not tile coords — do not use for navigation)
+    OW_PLAYER    = 0x02036E38   # struct OW[0], 36 bytes
+
+    # (Removed an incorrect note claiming 0x0202402C is gFrameCount. Verified live:
+    # u32@0x0202402C is STABLE across frames during battle (a frame counter would
+    # increment) and decodes to the on-screen wild/lead Pokémon — it IS gEnemyParty
+    # (see ENEMY_PARTY above). read_enemy_lead uses it and IDs opponents correctly.)
+
+    # Object events (NPCs) currently loaded: gObjectEvents[16], 36-byte stride,
+    # base = OW_PLAYER (slot 0 is the player). Used to route walk_to around NPCs.
+    #   +0x00 bit0 = active;  +0x01 bit5 = invisible;  +0x02 bit0 = isPlayer
+    #   +0x10 s16 currentCoords.x, +0x12 s16 currentCoords.y  (grid coord + 7)
+    # Only on-screen NPCs are loaded here (far ones aren't).
+    OBJECT_EVENTS       = 0x02036E38
+    OBJECT_EVENT_STRIDE = 0x24
+    OBJECT_EVENT_COUNT  = 16
+    OBJECT_COORD_OFFSET = 7
+    # +0x05 u8 graphicsId — identifies WHAT an object event is. Item balls on the
+    # ground use OBJ_EVENT_GFX_ITEM_BALL (92, from the pokefirered decomp). A collected
+    # ball's flag suppresses its spawn, so scanning loaded object events for this gfx
+    # id lists exactly the UNcollected balls currently on screen (pick_up_items).
+    OBJECT_GFX_OFFSET   = 0x05
+    OBJ_GFX_ITEM_BALL   = 92
+    # HM obstacle objects (loaded object events' graphicsId) and the avatar flags byte.
+    OBJ_GFX_CUT_TREE    = 95
+    OBJ_GFX_ROCK_SMASH  = 96
+    OBJ_GFX_BOULDER     = 97
+    # gPlayerAvatar.flags (u8): bit0 on foot, bit1 mach bike, bit2 acro, bit3 SURFING (verified:
+    # 1 -> 8 after answering YES to the Surf prompt).
+    PLAYER_AVATAR_FLAGS = 0x02037078
+    AVATAR_SURFING      = 0x08
+
+
+# Gen III character encoding (for nickname decoding)
+GEN3_CHARSET: dict[int, str | None] = {
+    0x00: " ",
+    0xA1: "0", 0xA2: "1", 0xA3: "2", 0xA4: "3", 0xA5: "4",
+    0xA6: "5", 0xA7: "6", 0xA8: "7", 0xA9: "8", 0xAA: "9",
+    0xAB: "!", 0xAC: "?", 0xAD: ".", 0xAE: "-",
+    0xBB: "A", 0xBC: "B", 0xBD: "C", 0xBE: "D", 0xBF: "E",
+    0xC0: "F", 0xC1: "G", 0xC2: "H", 0xC3: "I", 0xC4: "J",
+    0xC5: "K", 0xC6: "L", 0xC7: "M", 0xC8: "N", 0xC9: "O",
+    0xCA: "P", 0xCB: "Q", 0xCC: "R", 0xCD: "S", 0xCE: "T",
+    0xCF: "U", 0xD0: "V", 0xD1: "W", 0xD2: "X", 0xD3: "Y",
+    0xD4: "Z",
+    0xD5: "a", 0xD6: "b", 0xD7: "c", 0xD8: "d", 0xD9: "e",
+    0xDA: "f", 0xDB: "g", 0xDC: "h", 0xDD: "i", 0xDE: "j",
+    0xDF: "k", 0xE0: "l", 0xE1: "m", 0xE2: "n", 0xE3: "o",
+    0xE4: "p", 0xE5: "q", 0xE6: "r", 0xE7: "s", 0xE8: "t",
+    0xE9: "u", 0xEA: "v", 0xEB: "w", 0xEC: "x", 0xED: "y",
+    0xEE: "z",
+    0xFC: "\n", 0xFD: "[NAME]", 0xFE: "\n\n", 0xFF: None,
+}
+
+
+def decode_gen3_string(raw: bytes) -> str:
+    chars = []
+    for byte in raw:
+        ch = GEN3_CHARSET.get(byte)
+        if ch is None:
+            break
+        chars.append(ch)
+    return "".join(chars)
+
+
+# Full Gen I National Dex (1–151)
+SPECIES_NAMES: dict[int, str] = {
+    1: "Bulbasaur",    2: "Ivysaur",      3: "Venusaur",
+    4: "Charmander",   5: "Charmeleon",   6: "Charizard",
+    7: "Squirtle",     8: "Wartortle",    9: "Blastoise",
+    10: "Caterpie",   11: "Metapod",     12: "Butterfree",
+    13: "Weedle",     14: "Kakuna",      15: "Beedrill",
+    16: "Pidgey",     17: "Pidgeotto",   18: "Pidgeot",
+    19: "Rattata",    20: "Raticate",    21: "Spearow",
+    22: "Fearow",     23: "Ekans",       24: "Arbok",
+    25: "Pikachu",    26: "Raichu",      27: "Sandshrew",
+    28: "Sandslash",  29: "Nidoran-F",   30: "Nidorina",
+    31: "Nidoqueen",  32: "Nidoran-M",   33: "Nidorino",
+    34: "Nidoking",   35: "Clefairy",    36: "Clefable",
+    37: "Vulpix",     38: "Ninetales",   39: "Jigglypuff",
+    40: "Wigglytuff", 41: "Zubat",       42: "Golbat",
+    43: "Oddish",     44: "Gloom",       45: "Vileplume",
+    46: "Paras",      47: "Parasect",    48: "Venonat",
+    49: "Venomoth",   50: "Diglett",     51: "Dugtrio",
+    52: "Meowth",     53: "Persian",     54: "Psyduck",
+    55: "Golduck",    56: "Mankey",      57: "Primeape",
+    58: "Growlithe",  59: "Arcanine",    60: "Poliwag",
+    61: "Poliwhirl",  62: "Poliwrath",   63: "Abra",
+    64: "Kadabra",    65: "Alakazam",    66: "Machop",
+    67: "Machoke",    68: "Machamp",     69: "Bellsprout",
+    70: "Weepinbell", 71: "Victreebel",  72: "Tentacool",
+    73: "Tentacruel", 74: "Geodude",     75: "Graveler",
+    76: "Golem",      77: "Ponyta",      78: "Rapidash",
+    79: "Slowpoke",   80: "Slowbro",     81: "Magnemite",
+    82: "Magneton",   83: "Farfetch'd",  84: "Doduo",
+    85: "Dodrio",     86: "Seel",        87: "Dewgong",
+    88: "Grimer",     89: "Muk",         90: "Shellder",
+    91: "Cloyster",   92: "Gastly",      93: "Haunter",
+    94: "Gengar",     95: "Onix",        96: "Drowzee",
+    97: "Hypno",      98: "Krabby",      99: "Kingler",
+    100: "Voltorb",  101: "Electrode",  102: "Exeggcute",
+    103: "Exeggutor",104: "Cubone",     105: "Marowak",
+    106: "Hitmonlee",107: "Hitmonchan", 108: "Lickitung",
+    109: "Koffing",  110: "Weezing",    111: "Rhyhorn",
+    112: "Rhydon",   113: "Chansey",    114: "Tangela",
+    115: "Kangaskhan",116: "Horsea",    117: "Seadra",
+    118: "Goldeen",  119: "Seaking",    120: "Staryu",
+    121: "Starmie",  122: "Mr. Mime",   123: "Scyther",
+    124: "Jynx",     125: "Electabuzz", 126: "Magmar",
+    127: "Pinsir",   128: "Tauros",     129: "Magikarp",
+    130: "Gyarados", 131: "Lapras",     132: "Ditto",
+    133: "Eevee",    134: "Vaporeon",   135: "Jolteon",
+    136: "Flareon",  137: "Porygon",    138: "Omanyte",
+    139: "Omastar",  140: "Kabuto",     141: "Kabutops",
+    142: "Aerodactyl",143: "Snorlax",   144: "Articuno",
+    145: "Zapdos",   146: "Moltres",    147: "Dratini",
+    148: "Dragonair",149: "Dragonite",  150: "Mewtwo",
+    151: "Mew",
+}
+
+
+# All 354 Gen III moves (FireRed/LeafGreen)
+MOVE_NAMES: dict[int, str] = {
+    1:   "Pound",          2:   "Karate Chop",     3:   "Double Slap",
+    4:   "Comet Punch",    5:   "Mega Punch",       6:   "Pay Day",
+    7:   "Fire Punch",     8:   "Ice Punch",        9:   "Thunder Punch",
+    10:  "Scratch",        11:  "Vise Grip",        12:  "Guillotine",
+    13:  "Razor Wind",     14:  "Swords Dance",     15:  "Cut",
+    16:  "Gust",           17:  "Wing Attack",      18:  "Whirlwind",
+    19:  "Fly",            20:  "Bind",             21:  "Slam",
+    22:  "Vine Whip",      23:  "Stomp",            24:  "Double Kick",
+    25:  "Mega Kick",      26:  "Jump Kick",        27:  "Rolling Kick",
+    28:  "Sand Attack",    29:  "Headbutt",         30:  "Horn Attack",
+    31:  "Fury Attack",    32:  "Horn Drill",       33:  "Tackle",
+    34:  "Body Slam",      35:  "Wrap",             36:  "Take Down",
+    37:  "Thrash",         38:  "Double-Edge",      39:  "Tail Whip",
+    40:  "Poison Sting",   41:  "Twineedle",        42:  "Pin Missile",
+    43:  "Leer",           44:  "Bite",             45:  "Growl",
+    46:  "Roar",           47:  "Sing",             48:  "Supersonic",
+    49:  "Sonic Boom",     50:  "Disable",          51:  "Acid",
+    52:  "Ember",          53:  "Flamethrower",     54:  "Mist",
+    55:  "Water Gun",      56:  "Hydro Pump",       57:  "Surf",
+    58:  "Ice Beam",       59:  "Blizzard",         60:  "Psybeam",
+    61:  "Bubble Beam",    62:  "Aurora Beam",      63:  "Hyper Beam",
+    64:  "Peck",           65:  "Drill Peck",       66:  "Submission",
+    67:  "Low Kick",       68:  "Counter",          69:  "Seismic Toss",
+    70:  "Strength",       71:  "Absorb",           72:  "Mega Drain",
+    73:  "Leech Seed",     74:  "Growth",           75:  "Razor Leaf",
+    76:  "Solar Beam",     77:  "Poison Powder",    78:  "Stun Spore",
+    79:  "Sleep Powder",   80:  "Petal Dance",      81:  "String Shot",
+    82:  "Dragon Rage",    83:  "Fire Spin",        84:  "Thunder Shock",
+    85:  "Thunderbolt",    86:  "Thunder Wave",     87:  "Thunder",
+    88:  "Rock Throw",     89:  "Earthquake",       90:  "Fissure",
+    91:  "Dig",            92:  "Toxic",            93:  "Confusion",
+    94:  "Psychic",        95:  "Hypnosis",         96:  "Meditate",
+    97:  "Agility",        98:  "Quick Attack",     99:  "Rage",
+    100: "Teleport",       101: "Night Shade",      102: "Mimic",
+    103: "Screech",        104: "Double Team",      105: "Recover",
+    106: "Harden",         107: "Minimize",         108: "Smokescreen",
+    109: "Confuse Ray",    110: "Withdraw",         111: "Defense Curl",
+    112: "Barrier",        113: "Light Screen",     114: "Haze",
+    115: "Reflect",        116: "Focus Energy",     117: "Bide",
+    118: "Metronome",      119: "Mirror Move",      120: "Self-Destruct",
+    121: "Egg Bomb",       122: "Lick",             123: "Smog",
+    124: "Sludge",         125: "Bone Club",        126: "Fire Blast",
+    127: "Waterfall",      128: "Clamp",            129: "Swift",
+    130: "Skull Bash",     131: "Spike Cannon",     132: "Constrict",
+    133: "Amnesia",        134: "Kinesis",          135: "Soft-Boiled",
+    136: "Hi Jump Kick",   137: "Glare",            138: "Dream Eater",
+    139: "Poison Gas",     140: "Barrage",          141: "Leech Life",
+    142: "Lovely Kiss",    143: "Sky Attack",       144: "Transform",
+    145: "Bubble",         146: "Dizzy Punch",      147: "Spore",
+    148: "Flash",          149: "Psywave",          150: "Splash",
+    151: "Acid Armor",     152: "Crabhammer",       153: "Explosion",
+    154: "Fury Swipes",    155: "Bonemerang",       156: "Rest",
+    157: "Rock Slide",     158: "Hyper Fang",       159: "Sharpen",
+    160: "Conversion",     161: "Tri Attack",       162: "Super Fang",
+    163: "Slash",          164: "Substitute",       165: "Struggle",
+    166: "Sketch",         167: "Triple Kick",      168: "Thief",
+    169: "Spider Web",     170: "Mind Reader",      171: "Nightmare",
+    172: "Flame Wheel",    173: "Snore",            174: "Curse",
+    175: "Flail",          176: "Conversion 2",     177: "Aeroblast",
+    178: "Cotton Spore",   179: "Reversal",         180: "Spite",
+    181: "Powder Snow",    182: "Protect",          183: "Mach Punch",
+    184: "Scary Face",     185: "Feint Attack",     186: "Sweet Kiss",
+    187: "Belly Drum",     188: "Sludge Bomb",      189: "Mud-Slap",
+    190: "Octazooka",      191: "Spikes",           192: "Zap Cannon",
+    193: "Foresight",      194: "Destiny Bond",     195: "Perish Song",
+    196: "Icy Wind",       197: "Detect",           198: "Bone Rush",
+    199: "Lock-On",        200: "Outrage",          201: "Sandstorm",
+    202: "Giga Drain",     203: "Endure",           204: "Charm",
+    205: "Rollout",        206: "False Swipe",      207: "Swagger",
+    208: "Milk Drink",     209: "Spark",            210: "Fury Cutter",
+    211: "Steel Wing",     212: "Mean Look",        213: "Attract",
+    214: "Sleep Talk",     215: "Heal Bell",        216: "Return",
+    217: "Present",        218: "Frustration",      219: "Safeguard",
+    220: "Pain Split",     221: "Sacred Fire",      222: "Magnitude",
+    223: "Dynamic Punch",  224: "Megahorn",         225: "Dragon Breath",
+    226: "Baton Pass",     227: "Encore",           228: "Pursuit",
+    229: "Rapid Spin",     230: "Sweet Scent",      231: "Iron Tail",
+    232: "Metal Claw",     233: "Vital Throw",      234: "Morning Sun",
+    235: "Synthesis",      236: "Moonlight",        237: "Hidden Power",
+    238: "Cross Chop",     239: "Twister",          240: "Rain Dance",
+    241: "Sunny Day",      242: "Crunch",           243: "Mirror Coat",
+    244: "Psych Up",       245: "Extreme Speed",    246: "Ancient Power",
+    247: "Shadow Ball",    248: "Future Sight",     249: "Rock Smash",
+    250: "Whirlpool",      251: "Beat Up",          252: "Fake Out",
+    253: "Uproar",         254: "Stockpile",        255: "Spit Up",
+    256: "Swallow",        257: "Heat Wave",        258: "Hail",
+    259: "Torment",        260: "Flatter",          261: "Will-O-Wisp",
+    262: "Memento",        263: "Facade",           264: "Focus Punch",
+    265: "Smelling Salts", 266: "Follow Me",        267: "Nature Power",
+    268: "Charge",         269: "Taunt",            270: "Helping Hand",
+    271: "Trick",          272: "Role Play",        273: "Wish",
+    274: "Assist",         275: "Ingrain",          276: "Superpower",
+    277: "Magic Coat",     278: "Recycle",          279: "Revenge",
+    280: "Brick Break",    281: "Yawn",             282: "Knock Off",
+    283: "Endeavor",       284: "Eruption",         285: "Skill Swap",
+    286: "Imprison",       287: "Refresh",          288: "Grudge",
+    289: "Snatch",         290: "Secret Power",     291: "Dive",
+    292: "Arm Thrust",     293: "Camouflage",       294: "Tail Glow",
+    295: "Luster Purge",   296: "Mist Ball",        297: "Feather Dance",
+    298: "Teeter Dance",   299: "Blaze Kick",       300: "Mud Sport",
+    301: "Ice Ball",       302: "Needle Arm",       303: "Slack Off",
+    304: "Hyper Voice",    305: "Poison Fang",      306: "Crush Claw",
+    307: "Blast Burn",     308: "Hydro Cannon",     309: "Meteor Mash",
+    310: "Astonish",       311: "Weather Ball",     312: "Aromatherapy",
+    313: "Fake Tears",     314: "Air Cutter",       315: "Overheat",
+    316: "Odor Sleuth",    317: "Rock Tomb",        318: "Silver Wind",
+    319: "Metal Sound",    320: "Grass Whistle",    321: "Tickle",
+    322: "Cosmic Power",   323: "Water Spout",      324: "Signal Beam",
+    325: "Shadow Punch",   326: "Extrasensory",     327: "Sky Uppercut",
+    328: "Sand Tomb",      329: "Sheer Cold",       330: "Muddy Water",
+    331: "Bullet Seed",    332: "Aerial Ace",       333: "Icicle Spear",
+    334: "Iron Defense",   335: "Block",            336: "Howl",
+    337: "Dragon Claw",    338: "Frenzy Plant",     339: "Bulk Up",
+    340: "Bounce",         341: "Mud Shot",         342: "Poison Tail",
+    343: "Covet",          344: "Volt Tackle",      345: "Magical Leaf",
+    346: "Water Sport",    347: "Calm Mind",        348: "Leaf Blade",
+    349: "Dragon Dance",   350: "Rock Blast",       351: "Shock Wave",
+    352: "Water Pulse",    353: "Doom Desire",      354: "Psycho Boost",
+}

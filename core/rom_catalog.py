@@ -40,13 +40,13 @@ def read_name(rom,base,stride,index):
     i=base+index*stride
     return decode_name(rom[i:i+stride])
 
-def species_row(rom,index):
-    i=SPECIES_DATA+index*28;b=rom[i:i+28]
+def species_row(rom,index,base=SPECIES_DATA):
+    i=base+index*28;b=rom[i:i+28]
     if len(b)!=28 or any(x==0 for x in b[:6]) or max(b[6:8])>=len(TYPES) or any(TYPES[x] is None for x in b[6:8]):return None
     return list(dict.fromkeys(TYPES[x] for x in b[6:8]))
 
-def move_row(rom,index):
-    i=MOVE_DATA+index*12;b=rom[i:i+12]
+def move_row(rom,index,base=MOVE_DATA):
+    i=base+index*12;b=rom[i:i+12]
     if len(b)!=12 or b[2]>=len(TYPES) or TYPES[b[2]] is None or b[3]>100 or not 1<=b[4]<=64:return None
     return {"type":TYPES[b[2]],"power":b[1],"accuracy":b[3] or 100}
 
@@ -60,27 +60,28 @@ def table_referenced(rom,offset):
     return False
 
 class Catalog:
-    def __init__(self,rom):
-        if len(rom)<SPECIES_DATA+412*28 or rom[0xAC:0xB0]!=b"BPRE" or rom[0xBC]!=0:
+    def __init__(self,rom,layout=TABLES,code=b"BPRE",revision=0):
+        species_names,move_names,move_data,species_data=layout
+        if len(rom)<species_data+412*28 or rom[0xAC:0xB0]!=code or rom[0xBC]!=revision:
             raise ValueError("Not a supported candidate FireRed layout")
-        if not all(table_referenced(rom,x) for x in TABLES):
+        if not all(table_referenced(rom,x) for x in layout):
             raise ValueError("No live-layout pointer witnesses")
         for i,(name,types) in SPECIES_ANCHORS.items():
-            if name_key(read_name(rom,SPECIES_NAMES,11,i))!=name_key(name) or set(species_row(rom,i) or [])!=set(types):
+            if name_key(read_name(rom,species_names,11,i))!=name_key(name) or set(species_row(rom,i,species_data) or [])!=set(types):
                 raise ValueError("Species table anchor mismatch")
         for i,(name,t) in MOVE_ANCHORS.items():
-            row=move_row(rom,i)
-            if name_key(read_name(rom,MOVE_NAMES,13,i))!=name_key(name) or not row or row["type"]!=t or not row["power"]:
+            row=move_row(rom,i,move_data)
+            if name_key(read_name(rom,move_names,13,i))!=name_key(name) or not row or row["type"]!=t or not row["power"]:
                 raise ValueError("Move table anchor mismatch")
         self.species={};self.moves={};self.move_ids={}
         for i in range(1,412):
-            name=name_key(read_name(rom,SPECIES_NAMES,11,i));row=species_row(rom,i)
+            name=name_key(read_name(rom,species_names,11,i));row=species_row(rom,i,species_data)
             if name and row:self.species[name]=row if name not in self.species else None
         for i in range(1,355):
-            name=name_key(read_name(rom,MOVE_NAMES,13,i));row=move_row(rom,i)
+            name=name_key(read_name(rom,move_names,13,i));row=move_row(rom,i,move_data)
             if name and row:
                 self.moves[name]=row if name not in self.moves else None
-                self.move_ids[i]=dict(row,name=name)
+                self.move_ids[i]=dict(row,name=name,effect=rom[move_data+i*12])
 
     def enrich(self,obs):
         if obs.get("stage") not in ("battle_command","battle_moves","bag","party"):return obs
