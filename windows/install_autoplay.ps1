@@ -20,7 +20,7 @@ $files = @(
     'core/upstream_port.py','core/upstream_probe.py','core/upstream_skills.py','core/upstream_campaign.py','core/upstream_shop.py',
     'vendor/pokemon_agent/pathfinding.py','vendor/pokemon_agent/LICENSE','vendor/pokemon_agent/README.md',
     'windows/host.py','windows/local_state.py','windows/queue_host.py','windows/autoplay.py','windows/dashboard.py',
-    'tests/test_autoplay.py','tests/test_gameplay.py','tests/test_redundancy.py','tests/test_dashboard.py','tests/test_rom_catalog.py','tests/test_jj_fast.py','tests/test_jj_battle.py','tests/test_jj_explore.py','tests/test_jj_menus.py','tests/test_jj_runtime.py','tests/test_jj_connections.py','tests/test_jj_unattended.py','tests/test_upstream_battle.py','tests/test_upstream_port.py','tests/test_upstream_skills.py','tests/test_upstream_idle_frame_accounting.py','tests/test_upstream_queue.py','tests/test_upstream_shop.py','tests/test_gen3_profiles.py','tests/test_native_acceptance.py',
+    'tests/test_autoplay.py','tests/test_gameplay.py','tests/test_redundancy.py','tests/test_dashboard.py','tests/test_rom_catalog.py','tests/test_jj_fast.py','tests/test_jj_battle.py','tests/test_jj_explore.py','tests/test_jj_menus.py','tests/test_jj_runtime.py','tests/test_jj_connections.py','tests/test_jj_unattended.py','tests/test_upstream_battle.py','tests/test_upstream_port.py','tests/test_upstream_skills.py','tests/test_upstream_campaign_retry.py','tests/test_upstream_idle_frame_accounting.py','tests/test_upstream_queue.py','tests/test_upstream_shop.py','tests/test_gen3_profiles.py','tests/test_native_acceptance.py',
     'docs/CONTINUOUS_AUTOPLAY.md','docs/POKEMON_GAMEPLAY_AGENT.md','docs/CONSOLIDATED_PLAYER.md','docs/JJ_FAST_GAMEPLAY.md','docs/JJ_NATIVE_BATTLE.md','docs/JJ_EXPLORATION.md','docs/JJ_MENU_DRIVER.md','docs/JJ_RUNTIME_METRICS.md','docs/JJ_CONNECTIONS.md','docs/JJ_UNATTENDED.md','docs/UPSTREAM_PORTS.md','docs/UPSTREAM_SKILL_EXECUTION.md','docs/UPSTREAM_QUEUE_AND_JJ.md','docs/GEN3_COMPATIBILITY.md','docs/NATIVE_ACCEPTANCE.md','docs/GEN3_COMPATIBILITY.md'
 )
 $base = "https://raw.githubusercontent.com/xbaconator9000x/EXPERIMENTAL-ROM-TESTING-ENVIRONMENT/$Commit"
@@ -78,7 +78,7 @@ try {
         $installed += $file
         Copy-Item (Join-Path $incoming $file) $dest -Force
     }
-    foreach ($pattern in @('test_autoplay.py','test_gameplay.py','test_redundancy.py','test_dashboard.py','test_rom_catalog.py','test_jj_fast.py','test_jj_battle.py','test_jj_explore.py','test_jj_menus.py','test_jj_runtime.py','test_jj_connections.py','test_jj_unattended.py','test_upstream_battle.py','test_upstream_port.py','test_upstream_skills.py','test_upstream_idle_frame_accounting.py','test_upstream_queue.py','test_upstream_shop.py','test_gen3_profiles.py','test_native_acceptance.py')) {
+    foreach ($pattern in @('test_autoplay.py','test_gameplay.py','test_redundancy.py','test_dashboard.py','test_rom_catalog.py','test_jj_fast.py','test_jj_battle.py','test_jj_explore.py','test_jj_menus.py','test_jj_runtime.py','test_jj_connections.py','test_jj_unattended.py','test_upstream_battle.py','test_upstream_port.py','test_upstream_skills.py','test_upstream_campaign_retry.py','test_upstream_idle_frame_accounting.py','test_upstream_queue.py','test_upstream_shop.py','test_gen3_profiles.py','test_native_acceptance.py')) {
         & $py -3.12 -m unittest discover -s tests -p $pattern
         if ($LASTEXITCODE -ne 0) { throw "Local regression failed: $pattern" }
     }
