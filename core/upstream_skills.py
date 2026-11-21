@@ -75,13 +75,20 @@ class SkillTransport(ReadOnlyClient):
     def wait_until_idle(self,max_frames=300,stable=8):
         # Sample live RGB at four-frame intervals. Unlike the upstream native
         # binding the existing transport is a subprocess; avoid one IPC/frame.
+        # A sparse pixel stride can alias two distinct menu/dialogue frames.
+        # Hash the complete native RGB frame instead; do not mistake an
+        # animation or an advancing dialogue box for an idle menu.
+        import hashlib
         last=None
         count=0
         advanced=0
         while advanced<max_frames:
             n=min(4,max_frames-advanced)
             self.tick(n);advanced+=n
-            sample=self.live.rgb()[::311]
+            frame=self.live.rgb()
+            if not isinstance(frame,bytes) or len(frame)!=240*160*3:
+                raise SkillAbort("invalid native RGB frame")
+            sample=hashlib.blake2s(frame,digest_size=16).digest()
             count=count+n if sample==last else 0
             last=sample
             if count>=stable:return True
