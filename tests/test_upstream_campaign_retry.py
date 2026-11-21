@@ -72,6 +72,30 @@ class CampaignSkillTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.run_model([json.dumps({"name":"advance_dialog","args":{}})]*2,history)
 
+    def test_two_unchanged_successes_require_new_skill(self):
+        rgb=bytes(240*160*3)
+        history=[{"result":"read only","before":digest(rgb),"after":digest(rgb),
+                  "skill":"read_game_state","args":{}} for _ in range(2)]
+        result,opener=self.run_model([
+            json.dumps({"name":"read_game_state","args":{}}),
+            json.dumps({"name":"advance_dialog","args":{}})],history)
+        self.assertEqual(result,("advance_dialog",{}))
+        self.assertEqual(len(opener.requests),2)
+
+    def test_no_progress_twice_fails_closed(self):
+        rgb=bytes(240*160*3)
+        history=[{"result":"ok","before":digest(rgb),"after":digest(rgb),
+                  "skill":"team_report","args":{}} for _ in range(2)]
+        with self.assertRaises(ValueError):
+            self.run_model([json.dumps({"name":"team_report","args":{}})]*2,history)
+
+    def test_transition_does_not_count_as_unchanged(self):
+        rgb=bytes(240*160*3)
+        history=[{"result":"ok","before":digest(rgb),"after":"different",
+                  "skill":"advance_dialog","args":{}} for _ in range(2)]
+        result,_=self.run_model([json.dumps({"name":"advance_dialog","args":{}})],history)
+        self.assertEqual(result,("advance_dialog",{}))
+
     def test_changed_screen_allows_retry(self):
         previous={"result":"SKILL_STOPPED: blocked","before":"other screen",
                   "skill":"advance_dialog","args":{}}
