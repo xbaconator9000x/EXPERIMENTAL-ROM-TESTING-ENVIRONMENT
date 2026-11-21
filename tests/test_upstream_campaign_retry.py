@@ -46,6 +46,32 @@ class CampaignSkillTests(unittest.TestCase):
                   "skill":"advance_dialog","args":{}}
         with self.assertRaises(ValueError):
             self.run_model([json.dumps({"name":"advance_dialog","args":{}})]*2,[previous])
+    def test_interleaved_rejected_skill_remains_quarantined(self):
+        rgb=bytes(240*160*3)
+        history=[
+            {"result":"SKILL_STOPPED: no witness","before":digest(rgb),
+             "skill":"advance_dialog","args":{}},
+            {"result":"read only","before":digest(rgb),"after":digest(rgb),
+             "skill":"read_game_state","args":{}},
+        ]
+        result,opener=self.run_model([
+            json.dumps({"name":"advance_dialog","args":{}}),
+            json.dumps({"name":"team_report","args":{}})
+        ],history)
+        self.assertEqual(result,("team_report",{}))
+        self.assertEqual(len(opener.requests),2)
+
+    def test_interleaved_rejection_cannot_repeat_twice(self):
+        rgb=bytes(240*160*3)
+        history=[
+            {"result":"SKILL_STOPPED: no witness","before":digest(rgb),
+             "skill":"advance_dialog","args":{}},
+            {"result":"read only","before":digest(rgb),"after":digest(rgb),
+             "skill":"read_game_state","args":{}},
+        ]
+        with self.assertRaises(ValueError):
+            self.run_model([json.dumps({"name":"advance_dialog","args":{}})]*2,history)
+
     def test_changed_screen_allows_retry(self):
         previous={"result":"SKILL_STOPPED: blocked","before":"other screen",
                   "skill":"advance_dialog","args":{}}
