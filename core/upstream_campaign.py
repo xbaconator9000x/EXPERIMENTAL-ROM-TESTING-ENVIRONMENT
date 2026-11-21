@@ -53,6 +53,16 @@ def choose_skill(model,goal,state,history,rgb):
                    and h.get("skill")==name
                    and h.get("args",{})==args for h in recent):
                 raise ValueError("previously stopped skill at unchanged screen")
+            # Read-only or apparently successful skills can also loop forever
+            # without changing the scene. Quarantine an identical action after
+            # two consecutive unchanged outcomes at this exact screen; do not
+            # count a successful transition or a different observed screen.
+            unchanged_matches=[h for h in recent if
+                h.get("before")==current_screen and
+                h.get("after")==current_screen and
+                h.get("skill")==name and h.get("args",{})==args]
+            if len(unchanged_matches)>=2:
+                raise ValueError("repeated skill with no observed scene change")
             return name,args
         except (ValueError,KeyError,TypeError,UnicodeDecodeError):
             if attempt:raise ValueError("local model returned invalid skill twice") from None
