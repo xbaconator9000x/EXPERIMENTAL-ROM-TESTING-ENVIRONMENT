@@ -41,13 +41,23 @@ def choose_skill(model,goal,state,history,rgb):
             action=json.loads(envelope["message"]["content"])
             if type(action) is not dict or set(action)!={"name","args"}:
                 raise ValueError("bad skill response")
-            return validate_tool(action["name"],action["args"])
+            name,args=validate_tool(action["name"],action["args"])
+            # Rejected upstream skills at an unchanged exact RGB state are
+            # not progress; require a different action before native input.
+            if history:
+                previous=history[-1]
+                if (previous.get("result","").startswith("SKILL_STOPPED:")
+                    and previous.get("before")==digest(rgb)
+                    and previous.get("skill")==name
+                    and previous.get("args",{})==args):
+                    raise ValueError("repeated stopped skill at unchanged screen")
+            return name,args
         except (ValueError,KeyError,TypeError,UnicodeDecodeError):
             if attempt:raise ValueError("local model returned invalid skill twice") from None
             payload["messages"].append({"role":"system","content":
                 "Your last response was invalid. Return ONLY JSON with exactly name and args. "
                 "Name must be an allowed skill, args must match its named argument types. "
-                "Do not include explanations or markdown."})
+                "Do not include explanations or markdown. If a skill was rejected at the same screen, choose different arguments or a different skill."})
     raise ValueError("unreachable skill retry")
 
 def campaign(runner,rom,sha,checkout,folder,model,goal,max_decisions,should_stop=lambda:False,report=lambda *a:None):
