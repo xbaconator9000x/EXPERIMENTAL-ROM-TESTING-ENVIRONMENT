@@ -44,13 +44,15 @@ def choose_skill(model,goal,state,history,rgb):
             name,args=validate_tool(action["name"],action["args"])
             # Rejected upstream skills at an unchanged exact RGB state are
             # not progress; require a different action before native input.
-            if history:
-                previous=history[-1]
-                if (previous.get("result","").startswith("SKILL_STOPPED:")
-                    and previous.get("before")==digest(rgb)
-                    and previous.get("skill")==name
-                    and previous.get("args",{})==args):
-                    raise ValueError("repeated stopped skill at unchanged screen")
+            # Quarantine every rejected action at this exact screen, not only
+            # the immediately preceding action. Alternating two rejected
+            # skills must not evade the replay guard.
+            current_screen=digest(rgb)
+            if any(h.get("result","").startswith("SKILL_STOPPED:")
+                   and h.get("before")==current_screen
+                   and h.get("skill")==name
+                   and h.get("args",{})==args for h in recent):
+                raise ValueError("previously stopped skill at unchanged screen")
             return name,args
         except (ValueError,KeyError,TypeError,UnicodeDecodeError):
             if attempt:raise ValueError("local model returned invalid skill twice") from None
