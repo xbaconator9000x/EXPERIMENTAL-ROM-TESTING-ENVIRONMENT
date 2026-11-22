@@ -31,7 +31,9 @@ choices without another Qwen call. Its existing tactics use:
 
 - Classic Gen III type effectiveness from the pinned chart, STAB, real base
   power/accuracy, live stats and stages, current PP, burn and disabled moves
-- Fresh HP and opponent status to select attacks, switch or heal
+- Fresh HP and opponent status to select attacks, switch or heal; healthy
+  switch candidates are ranked using ROM-verified type resistance and current
+  HP/level, rather than always selecting the highest-HP backup
 - Verified False Swipe/sleep/paralysis effects, cautious HP management and
   item availability for a capture attempt
 - Verified party composition: initial team building first, then new type
