@@ -26,13 +26,58 @@ class TestExplorer(unittest.TestCase):
         self.assertEqual(result[0],[npc,warp])
         probe=meta["native_event_probe"]
         self.assertEqual(probe["status"],"EVENTS_READ")
-        self.assertEqual(probe["counts"],{"npc":1,"warp":1,"connection":0})
+        self.assertEqual(probe["counts"],{"npc":1,"warp":1,"bg":0,"connection":0})
         self.assertEqual(probe["reachable"],2)
         self.assertEqual(probe["attempted"],0)
         self.assertEqual(probe["event_positions"],[{"kind":"npc","x":3,"y":1},{"kind":"warp","x":4,"y":4}])
         with patch("core.jj_explore.event_targets",side_effect=ValueError("invalid event pointer")):
             self.assertIsNone(ex.inspect(candidate,meta))
         self.assertEqual(meta["native_event_probe"]["status"],"EVENTS_REJECTED")
+
+    def test_background_event_is_native_interaction_target(self):
+        f,npc,warp=self.setup()
+        ball={"kind":"bg","x":2,"y":1,"id":0,"bg_kind":1}
+        candidate=(f,0x08001235,{(3,1)})
+        ex=Explorer(MockAdapter())
+        meta={"native_party_count":0}
+        info=([warp,npc,ball],"RIGHT")
+        self.assertTrue(ex.request(candidate,meta,info,"interact"))
+        self.assertEqual(meta["event_goal"]["event"],ball)
+        # Player (1,1) already stands directly left of the scripted ball.
+        choice,command=ex.next(candidate,meta,info)
+        self.assertEqual(choice["actions"],[{"button":"A","frames":5}])
+        self.assertEqual(command[0],"interact")
+        ex.finish(meta,candidate,None,command)
+        self.assertIn(event_key(f,ball),meta["event_attempts"])
+
+    def test_background_event_reader_uses_checked_rom_pointers(self):
+        from core.jj_explore import event_targets
+        from unittest.mock import patch
+        import struct
+        f=Field((1,2),(1,1),5,5,(0,)*25)
+        base=0x08000000
+        header=base+0x20
+        events=base+0x100
+        bg=base+0x200
+        buffer=bytearray(0x300)
+        struct.pack_into("<I",buffer,0x24,events)
+        buffer[0x103]=1  # one background event, zero NPCs/warps
+        struct.pack_into("<I",buffer,0x110,bg)
+        struct.pack_into("<hhBBHI",buffer,0x200,2,1,0,1,0,base+0x280)
+        class Live:
+            def integer(self,addr,n):return int.from_bytes(self.read(addr,n),"little")
+            def read(self,addr,n):
+                if addr==0x02000000:return bytes(576)
+                if addr>=base and addr+n<=base+len(buffer):
+                    return bytes(buffer[addr-base:addr-base+n])
+                raise ValueError("out of range")
+        live=Live()
+        with patch("core.jj_explore.crossings",return_value=[]):
+            result,facing=event_targets(live,len(buffer),f,header,0x02000000)
+        self.assertEqual(result,[{"kind":"bg","x":2,"y":1,"id":0,"bg_kind":1}])
+        buffer[0x103]=65
+        with self.assertRaises(ValueError):
+            event_targets(live,len(buffer),f,header,0x02000000)
 
     def test_event_approach_and_interaction(self):
         f,npc,warp=self.setup();c=(f,1,{(3,1)})
