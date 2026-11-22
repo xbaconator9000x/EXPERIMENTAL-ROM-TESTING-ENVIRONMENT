@@ -28,6 +28,7 @@ from core.gen3_profiles import open_profile, VanillaField, VanillaBattle
 from core.native_acceptance import Acceptance
 from core.jj_explore import Explorer, native_event_settle
 from core.jj_compat import safe_map_audit
+from core.jj_event_data import safe_event_data
 from core.jj_world_model import observe as world_observe, task as world_task, summary as world_summary, complete as world_complete
 from core.jj_tile_memory import refresh_on_verified_arrival, confirm_native_position
 from core.jj_menus import MenuDriver,intent_from_battle
@@ -353,6 +354,10 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     if len(audits)>64:
                         for old in list(audits)[:-64]:audits.pop(old,None)
                 meta["rom_hack_map_compat"]=audits[map_key]
+                # Stock FRLG event data is a *candidate* on a ROM hack.
+                # Record only aggregate read-only evidence; never assert
+                # quest completion from flags without an observed event.
+                meta["rom_hack_event_data"]=safe_event_data(live,field_before[0])
             # Only actual native movement proof can update the world graph.
             if sha in JJ_RELEASES and field_verified:
                 world_observe(meta,field_before,events[0] if events else None,

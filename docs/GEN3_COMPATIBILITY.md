@@ -64,3 +64,14 @@ possibilities, never claims that either ran, and stops at variable-width,
 custom or opaque native commands. Loop detection and an eight-segment-per-
 script budget prevent stalls. Invalid branch targets are counted only; their
 addresses and raw command bytes never leave the host.
+
+## Read-only persistent event state (candidate)
+From pret/pokefirered include/global.h and src/event_data.c, the exact-release
+adapter can additionally inspect a stock-layout candidate for 0x120 bytes of
+flags (SaveBlock1 + 0xEE0) and 0x100 halfword variables (SaveBlock1 + 0x1000).
+The live SaveBlock1 pointer and position/map identity must independently
+match the verified overworld field. Special flags/variables remain unsupported
+because they live outside this save region. Aggregate flag counts and nonzero
+variable counts only are exposed privately; **no raw save data or IDs** enter
+logs, GitHub issues, or PRs. Changes are never treated as quest completion
+without a separately observed event and correct modified-ROM layout evidence.
