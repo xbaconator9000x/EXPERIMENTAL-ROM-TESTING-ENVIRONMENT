@@ -1086,7 +1086,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     continue
                 meta["review"]={"scene":decision["scene"],"objective":decision["objective"],"reason":"repeated screen cycle; alternative action required"}
                 if attempt_auto_review_recovery():continue
-                save_progress(path,identity,meta,state,rgb)
+                save_progress(path,identity,meta,live.save_state(),rgb)
                 report("NEEDS_REVIEW",meta,rgb)
                 if control:
                     control.review=True
