@@ -453,6 +453,20 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                         meta.pop("event_goal",None);meta.pop("native_route",None)
                         meta.pop("failed_action",None)
                         continue
+                    if control:
+                        # Replay has failed. Reopen only the original verified
+                        # pre-action state and await an explicit remote recovery,
+                        # never assume that the crashing action succeeded.
+                        try:
+                            live=open_live(state);session_frames=0
+                            adapter.attach(live)
+                        except (LiveError,OSError):
+                            return "EMULATOR_ERROR",meta,rgb
+                        control.review=True
+                        live,meta,rgb,_=control.serve(live,meta,rgb,should_stop)
+                        if should_stop():return "STOPPED",meta,rgb
+                        acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
+                        continue
                     return "EMULATOR_ERROR",meta,rgb
             if source=="native_battle":
                 intent=intent_from_battle(battle_before,decision)
