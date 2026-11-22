@@ -205,6 +205,51 @@ def observe_battle(meta,state,catalog,*,decision):
     return True
 
 
+def party_coverage(meta):
+    """Classic type coverage inferred only from exact-ROM species/move IDs.
+
+    This is a team-planning summary, not a forecast of incoming damage:
+    abilities, weather, actual movesets and hack-specific effects may differ.
+    """
+    data=meta.get("party_knowledge",{})
+    current=data.get("current",{}) if isinstance(data,dict) else {}
+    members=current.get("members",[]) if isinstance(current,dict) else []
+    alive=[m for m in members if isinstance(m,dict) and m.get("hp",0)>0]
+    if not alive:return None
+    typed=[]
+    offensive=set()
+    for m in alive:
+        info=m.get("species")
+        if not isinstance(info,dict) or not isinstance(info.get("types"),list):
+            return {"coverage_verified":False,"reason":"incomplete_species_typing"}
+        types=info["types"]
+        if not types or any(t not in ATTACK_TYPES for t in types):
+            return {"coverage_verified":False,"reason":"unknown_species_typing"}
+        typed.append(types)
+        for move in m.get("moves",[]):
+            if (isinstance(move,dict) and move.get("type") in ATTACK_TYPES
+                    and _int(move.get("power"),1,250)
+                    and _int(move.get("pp"),1,64)
+                    and _int(move.get("effect"),0,255)
+                    and safe_damage_kind(move,0,False) is not None):
+                offensive.add(move["type"])
+    pressures=[]
+    for attack in ATTACK_TYPES:
+        multipliers=[classic_multiplier(attack,ts) for ts in typed]
+        if any(x is None for x in multipliers):continue
+        weak=sum(x>1 for x in multipliers)
+        resists=sum(x<1 for x in multipliers)
+        if weak:
+            pressures.append({"attack_type":attack,"weak_members":weak,
+                              "resisting_members":resists})
+    pressures.sort(key=lambda x:(-x["weak_members"],x["resisting_members"],x["attack_type"]))
+    return {"coverage_verified":True,
+            "party_types":sorted({t for group in typed for t in group}),
+            "currently_usable_damaging_types":sorted(offensive),
+            "defensive_pressures":pressures[:8],
+            "warning":"Type chart only. Actual damage, abilities, weather and modified moves are not predicted."}
+
+
 def knowledge_context(meta):
     """Small bounded prompt note. Never substitute it for live HP/PP or cursor."""
     data=meta.get("party_knowledge")
@@ -222,7 +267,8 @@ def knowledge_context(meta):
                       for x in m.get("moves",[])[:4]]}
         roster.append(row)
     return {"last_verified_decision":current.get("decision"),
-            "party":roster,"warning":"Historical party knowledge; never trust remembered PP/HP/menus for controller actions."}
+            "party":roster,"coverage":party_coverage(meta),
+            "warning":"Historical party knowledge; never trust remembered PP/HP/menus for controller actions."}
 
 
 def capture_preference(party,enemy,catalog,bag,*,wild=True):
