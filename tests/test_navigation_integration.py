@@ -20,7 +20,9 @@ class LocalLive:
     def step(self,button,frames):
         self.value=(self.value+button+frames)%256
     def rgb(self):
-        return bytes((self.value,))*115200
+        # Nonblank RGB: menu interlock must be tested as a real rendered scene,
+        # not short-circuited by the blank/transition detector.
+        return bytes((self.value,0,255-self.value))*38400
     def save_state(self):
         return bytes((self.value,))
     def load_state(self,state):
@@ -93,7 +95,8 @@ class CountingModel:
 class NativeRecoveryIntegrationTests(unittest.TestCase):
     def run_sample(self,menu=False):
         rom_sha="a"*64
-        screen=digest(bytes((42,))*115200)
+        initial=bytes((42,0,213))*38400
+        screen=digest(initial)
         model=CountingModel()
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
@@ -107,7 +110,7 @@ class NativeRecoveryIntegrationTests(unittest.TestCase):
                       "actions":[{"button":"LEFT","frames":16}]}]
             meta={"decisions":1,"frames":120,"history":history,
                   "field_proof":{"callback":0x08001235,"directions":["UP"]}}
-            save_progress(checkpoint,identity,meta,bytes((42,)),bytes((42,))*115200)
+            save_progress(checkpoint,identity,meta,bytes((42,)),initial)
             with ExitStack() as stack:
                 for name,value in (
                     ("Live",LocalLive),("Adapter",LocalAdapter),
