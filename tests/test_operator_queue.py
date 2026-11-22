@@ -31,8 +31,8 @@ class QueueTests(unittest.TestCase):
                     return {"state":"open","comments":len(self.rows)}
                 if "/comments?" in path:
                     import re
-                    page=int(re.search(r"page=(\\d+)",path).group(1))
-                    count=int(re.search(r"per_page=(\\d+)",path).group(1))
+                    page=int(re.search(r"page=(\d+)",path).group(1))
+                    count=int(re.search(r"per_page=(\d+)",path).group(1))
                     self.max_page_size=max(getattr(self,"max_page_size",0),count)
                     if count>20:
                         raise ValueError("Github comment page exceeds remote response cap")
@@ -42,12 +42,12 @@ class QueueTests(unittest.TestCase):
             r=Paged()
             # 141 old image comments could exceed the 2MiB transport limit
             # if fetched 100 at a time; fetching 20 remains bounded.
-            r.rows=[row(i+1,"ROM-AUTOPLAY-FRAME v1\\n"+"A"*44000)
+            r.rows=[row(i+1,"ROM-AUTOPLAY-FRAME v1\n"+"A"*44000)
                     for i in range(141)]
             poller=ControlPoller(r,7,SHA,d,{"rom":SHA},"runner","rom")
             poller.poll_once()
             self.assertEqual(r.max_page_size,20)
-            self.assertTrue(any(v.startswith("ROM-CONTROL-READY v1\\n")
+            self.assertTrue(any(v.startswith("ROM-CONTROL-READY v1\n")
                                 for v in r.out))
             self.assertEqual(poller.seen,141)
             new=COMMAND_PREFIX+json.dumps({"version":1,"rom_sha256":SHA,
