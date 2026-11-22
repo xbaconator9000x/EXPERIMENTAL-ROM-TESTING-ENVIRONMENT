@@ -321,7 +321,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
         before=folder/("review-before-"+screen[:16]+".bin")
         if not before.exists():
             save_progress(before,identity,copy.deepcopy(meta),live.save_state(),rgb)
-        start_rgb=rgb
+        native_progress={"moved":False}
 
         def eligible(frame,button):
             if floating_choice(frame):return False
@@ -337,10 +337,23 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
 
         def press(button,frames):
             nonlocal rgb
+            native_progress["moved"]=False
             live.step(BUTTONS[button],frames)
             live.step(0,3)
             live.step(0,48)
             rgb=live.rgb()
+            # The static camera may not change enough pixels for a move to
+            # look different. Retain a *candidate* native position witness,
+            # never a claimed map/quest acceptance, if the read-only callback
+            # and map structures have become readable again.
+            if button in ("UP","DOWN","LEFT","RIGHT"):
+                known=meta.get("last_native_field")
+                if isinstance(known,dict):
+                    candidate=adapter.candidate(rgb)
+                    if candidate and isinstance(known.get("map"),list) and (
+                            list(candidate[0].map_id)!=known["map"] or
+                            list(candidate[0].pos)!=known.get("pos")):
+                        native_progress["moved"]=True
             meta["frames"]=meta.get("frames",0)+frames+51
             meta["decisions"]=meta.get("decisions",0)+1
             entry={"decision":meta["decisions"],"scene":"review_recovery",
@@ -397,7 +410,8 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
         try:
             status,new_rgb=bounded_review_recovery(
                 meta,rgb,press=press,delay=delay,permit=eligible,
-                visual=visual,report=progress)
+                visual=visual,report=progress,
+                witness=lambda: native_progress["moved"])
         except (LiveError,OSError,ValueError):
             meta.setdefault("review_recovery",{})["status"]="FAILED"
             save_progress(path,identity,meta,live.save_state(),rgb)
