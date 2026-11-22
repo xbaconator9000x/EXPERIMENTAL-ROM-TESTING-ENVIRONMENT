@@ -1,6 +1,6 @@
 import unittest
 from core.firered import Field
-from core.jj_explore import Explorer,options,event_key
+from core.jj_explore import Explorer,options,event_key,native_event_settle
 
 class MockAdapter:
     def verified_field(self,c,m):return bool(c)
@@ -357,6 +357,21 @@ class TestExplorer(unittest.TestCase):
         second,cmd=ex.next(candidate,meta,info)
         self.assertEqual(second["actions"],[{"button":"A","frames":5}])
         self.assertEqual(cmd[0],"interact")
+
+    def test_native_script_trigger_settles_without_stealing_extra_inputs(self):
+        # The same code controls the real live_runner settle budget. The
+        # script/warp may start after the movement tick, not immediately.
+        events=([{"kind":"warp","x":4,"y":2,"id":0},
+                 {"kind":"coord","x":2,"y":1,"id":1},
+                 {"kind":"npc","x":1,"y":2,"id":2}],None)
+        self.assertEqual(native_event_settle(("move",(2,1)),events),150)
+        self.assertEqual(native_event_settle(("move",(4,2)),events),150)
+        self.assertEqual(native_event_settle(("move",(3,1)),events),16)
+        self.assertEqual(native_event_settle(("face",(1,1)),events),16)
+        self.assertEqual(native_event_settle(("interact",None),events),150)
+        self.assertEqual(native_event_settle(("cross",None),events),150)
+        self.assertEqual(native_event_settle(("move",(4,2)),None),16)
+        self.assertEqual(native_event_settle(None,events),16)
 
     def test_connection_turn_only_retries_before_claiming_attempt(self):
         f=Field((43,1),(0,1),4,3,(0,)*12)

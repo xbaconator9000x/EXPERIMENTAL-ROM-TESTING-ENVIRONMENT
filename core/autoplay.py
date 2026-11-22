@@ -26,7 +26,7 @@ from core.jj_fast import Adapter, quick_dialogue, ordinary_dialogue, MAIN, ADMIT
 from core.jj_battle import BattleAdapter
 from core.gen3_profiles import open_profile, VanillaField, VanillaBattle
 from core.native_acceptance import Acceptance
-from core.jj_explore import Explorer
+from core.jj_explore import Explorer, native_event_settle
 from core.jj_world_model import observe as world_observe, task as world_task, summary as world_summary, complete as world_complete
 from core.jj_tile_memory import refresh_on_verified_arrival, confirm_native_position
 from core.jj_menus import MenuDriver,intent_from_battle
@@ -739,7 +739,10 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if batch_pending:
                 meta["action_batch"]=batch_pending
             # Segment the native 200k-frame guard without losing game state.
-            settle=150 if source=="fast_dialogue" else (150 if event_command and event_command[0] in ("interact","cross") else 16) if source in ("native_route","native_explore") else settle_frames(decision,source,visible_dialogue=ordinary_dialogue(rgb) is not None)
+            settle=(150 if source=="fast_dialogue" else
+                    native_event_settle(event_command,events) if source=="native_explore" else
+                    16 if source=="native_route" else
+                    settle_frames(decision,source,visible_dialogue=ordinary_dialogue(rgb) is not None))
             cost=sum(a["frames"]+settle for a in actions)
             witness_before=acceptance.witness(live,field_before,battle_before)
             if session_frames+cost>180000:

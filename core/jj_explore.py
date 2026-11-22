@@ -138,6 +138,25 @@ def options(field,occupied,events,attempted,blocked=(),avoid_warps=None):
             candidates.append((len(path),key,tuple(target),direction,e,path))
     return sorted(candidates,key=lambda c:(c[0],c[1],c[2]))
 
+def native_event_settle(command,info):
+    """Extra idle frames only when a native input can launch a script or warp.
+
+    Ordinary field steps remain at 16 frames. A coordinate trigger crossed
+    in the middle of an exit route still needs a chance to finish its script
+    before a subsequent directional input is planned. This is idle emulation,
+    never extra A/START confirmations or a visual-model consultation.
+    """
+    if not command:return 16
+    kind,target=command
+    if kind in ("interact","cross"):return 150
+    if kind!="move" or not info or target is None:return 16
+    for event in info[0]:
+        if (isinstance(event,dict) and event.get("kind") in ("warp","coord")
+                and (event.get("x"),event.get("y"))==tuple(target)):
+            return 150
+    return 16
+
+
 class Explorer:
     def __init__(self,adapter):self.adapter=adapter
     def inspect(self,candidate,meta):
