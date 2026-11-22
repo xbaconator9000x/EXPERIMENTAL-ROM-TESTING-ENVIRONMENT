@@ -4,9 +4,12 @@ import os
 from pathlib import Path
 import threading
 import time
+import uuid
+import base64
+import hashlib
 from core.operator_control import validate_command,OperatorControl
-from windows.queue_host import validate as validate_test, run as run_test, RUNNER as TEST_RUNNER
-from windows.host import ROOT,LIBRARY,fingerprint
+from windows.queue_host import validate as validate_test, run as run_test, RUNNER as TEST_RUNNER, evidence_parts
+from windows.host import ROOT,LIBRARY,RUNS,fingerprint
 
 COMMAND_PREFIX="ROM-CONTROL v1\n"
 ACK_PREFIX="ROM-CONTROL-ACK v1\n"
@@ -48,15 +51,34 @@ class ControlPoller:
             self.remote.request("/issues/"+str(self.issue)+"/comments",
                                 {"body":ACK_PREFIX+json.dumps(body,separators=(",",":"))})
         except (OSError,ValueError,KeyError):
-            # Local audit is authoritative for execution. Network delivery may retry
-            # only manually, never by replaying the native input.
+            # Local audit is authoritative for execution. Never replay native input
+            # merely because a GitHub acknowledgement was lost.
             pass
+        if status=="EXECUTED" and rgb is not None and action not in ("status","pause","resume"):
+            try:
+                from core.autoplay import png
+                raw=png(rgb)
+                encoded=base64.b64encode(raw).decode("ascii")
+                total=(len(encoded)+43999)//44000
+                if total<=24:
+                    for part in range(total):
+                        packet={"id":id,"sha256":hashlib.sha256(raw).hexdigest(),
+                                "part":part+1,"parts":total,"base64":encoded[part*44000:(part+1)*44000]}
+                        self.remote.request("/issues/"+str(self.issue)+"/comments",
+                                            {"body":"ROM-CONTROL-FRAME v1\\n"+json.dumps(packet,separators=(",",":"))})
+            except (OSError,ValueError,KeyError):
+                pass
 
-    def _test_worker(self,id,job):
+    def _test_worker(self,id,issue,job):
         try:
+            run_id="remote-"+uuid.uuid4().hex
             status=run_test(job,self.test_stop,runner=TEST_RUNNER,library=LIBRARY,
-                            timeout=600,allow_v2=False)
-            self.ack(id,"EXECUTED" if status=="PASS" else "TEST_"+status,"test")
+                            timeout=600,allow_v2=False,run_id=run_id)
+            self.ack(id,"TEST_"+status,"test")
+            if self.remote.share_evidence:
+                for part in evidence_parts(RUNS/run_id):
+                    if self.test_stop.is_set():break
+                    self.remote.evidence(issue,part)
         except (OSError,ValueError,RuntimeError):
             self.ack(id,"FAILED","test",reason="HOST_ERROR")
 
@@ -71,7 +93,7 @@ class ControlPoller:
         if job["version"]!=1 or job["sha256"]!=self.sha:
             self.ack(id,"FAILED","test",reason="TEST_ROM_MISMATCH");return
         self.test_stop.clear()
-        self.test_thread=threading.Thread(target=self._test_worker,args=(id,job),daemon=True)
+        self.test_thread=threading.Thread(target=self._test_worker,args=(id,number,job),daemon=True)
         self.test_thread.start()
         self.ack(id,"ACCEPTED","test")
 
