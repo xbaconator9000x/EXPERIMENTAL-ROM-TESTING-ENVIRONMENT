@@ -250,6 +250,48 @@ def party_coverage(meta):
             "warning":"Type chart only. Actual damage, abilities, weather and modified moves are not predicted."}
 
 
+def retain_verified_outcomes(meta):
+    """Copy only actual acceptance-ledger milestones into durable experience.
+
+    A party slot change, model speculation, or battle callback alone cannot
+    count as a battle win or capture; NativeAcceptance supplies those proofs.
+    """
+    evidence=meta.get("native_acceptance")
+    if not isinstance(evidence,dict) or not evidence.get("profile_admitted"):
+        return 0
+    events=evidence.get("events",[])
+    if not isinstance(events,list):return 0
+    book=meta.get("party_knowledge")
+    if not isinstance(book,dict) or book.get("version")!=1:
+        book={"version":1,"events":[],"current":{}}
+        meta["party_knowledge"]=book
+    known=list(book.get("verified_outcomes",[]))[-24:]
+    existing={(x.get("kind"),x.get("decision"),x.get("before"),x.get("after"))
+              for x in known if isinstance(x,dict)}
+    added=0
+    for e in events:
+        if not isinstance(e,dict) or e.get("kind") not in ("battle_win","wild_capture","healing"):
+            continue
+        if not _int(e.get("decision"),0,10000000):
+            continue
+        before,after=e.get("before"),e.get("after")
+        if not (isinstance(before,str) and isinstance(after,str)
+                and len(before)==64 and len(after)==64):
+            continue
+        key=(e["kind"],e["decision"],before,after)
+        if key in existing:continue
+        row={"kind":e["kind"],"decision":e["decision"],"before":before,"after":after}
+        detail=e.get("detail")
+        if isinstance(detail,dict):
+            if e["kind"]=="wild_capture" and _int(detail.get("species"),1,411):
+                row["species_id"]=detail["species"]
+            if e["kind"]=="healing" and _int(detail.get("slot"),0,5):
+                row["slot"]=detail["slot"]
+        known.append(row);existing.add(key);added+=1
+    book["verified_outcomes"]=known[-24:]
+    return added
+
+
 def knowledge_context(meta):
     """Small bounded prompt note. Never substitute it for live HP/PP or cursor."""
     data=meta.get("party_knowledge")
@@ -268,6 +310,7 @@ def knowledge_context(meta):
         roster.append(row)
     return {"last_verified_decision":current.get("decision"),
             "party":roster,"coverage":party_coverage(meta),
+            "verified_outcomes":data.get("verified_outcomes",[])[-6:],
             "warning":"Historical party knowledge; never trust remembered PP/HP/menus for controller actions."}
 
 
