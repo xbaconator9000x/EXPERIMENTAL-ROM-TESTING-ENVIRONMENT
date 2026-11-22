@@ -58,12 +58,13 @@ class Tests(unittest.TestCase):
                          [{"button":"WAIT","frames":24}])
         self.assertIsNone(script_settle(meta,"script-warning"))
         self.assertEqual(meta["script_settle"]["same_screen"],3)
-        # A new frame can legitimately be another step of a script, but
-        # the total budget cannot be extended forever by animation frames.
-        for i in range(5):
+        # A new frame can legitimately be another step of an animated
+        # cutscene or slowly typed dialogue. Stay native and GPU-free during
+        # observed visual progress, but retain a finite global wait budget.
+        for i in range(29):
             self.assertIsNotNone(script_settle(meta,f"animated-{i}"))
-        self.assertIsNone(script_settle(meta,"animated-5"))
-        self.assertEqual(meta["script_settle"]["total"],8)
+        self.assertIsNone(script_settle(meta,"animated-29"))
+        self.assertEqual(meta["script_settle"]["total"],32)
 
     def test_starter_vision_budget_parks_no_progress_instead_of_burning_gpu(self):
         from core.jj_unattended import vision_stall

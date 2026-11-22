@@ -68,6 +68,19 @@ class FastTests(unittest.TestCase):
         rect(7,153,225,6,(4,8,12))
         self.assertIsNone(ordinary_dialogue(bytes(raw)))
 
+    def test_dialogue_with_bright_furniture_touching_right_screen_edge(self):
+        # An actual indoor Jessie/James scene contains a bright cabinet or
+        # window flush with the right edge above an orange dialogue box.
+        # A detached top-right YES/NO overlay must remain excluded, but the
+        # edge-touching white background cannot masquerade as a choice.
+        rgb=bytearray(frame())
+        for y in range(24,56):
+            rgb[(y*240+176)*3:(y*240+240)*3]=bytes((255,255,255))*64
+        shown=bytes(rgb)
+        self.assertIsNotNone(ordinary_dialogue(shown))
+        self.assertIsNotNone(quick_dialogue(shown,{"history":[]}))
+        self.assertIsNone(ordinary_dialogue(frame(choice=True)))
+
     def test_real_style_starter_warning_box_with_dark_lower_border(self):
         # A real v1.03.3 playthrough showed a full-width field message
         # while script controls were locked. The previous lower-border detector demanded gray/

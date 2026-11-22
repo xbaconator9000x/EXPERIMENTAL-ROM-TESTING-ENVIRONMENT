@@ -115,14 +115,16 @@ def alternative(meta,screen,candidate,history):
         if not quarantined(meta,screen,a):return a
     return None
 
-def script_settle(meta,screen,*,limit=8):
+def script_settle(meta,screen,*,limit=32):
     """Advance only GBA time when field controls are script-locked.
 
     The caller first attempts a pixel-validated ordinary dialogue page.
     Unknown script screens are NEVER interpreted as overworld navigation.
     Repeated unchanged frames or too many waits fail closed for review,
     preserving the previous native checkpoint and avoiding repeated Qwen
-    inferences against a control-locked scene.
+    inferences against a control-locked scene. A live cutscene can move
+    sprites and type multiple dialogue pages for longer than eight 24-frame
+    waits; that is genuine screen progress, not an operator emergency.
     """
     state=meta.get("script_settle",{})
     if not isinstance(state,dict):state={}

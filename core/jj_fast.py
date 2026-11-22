@@ -109,7 +109,11 @@ def ordinary_dialogue(rgb):
         lo,hi=run(colors(row),white)
         # Non-framed choice panels are typically at the top-right. A wide
         # white bed, wall or window in the map is NOT a dialogue choice.
-        if lo>=155 and hi>=200 and hi-lo>=36 and row+8<110 and sum(white(p) for p in colors(row+8)[lo:hi])>=hi-lo-5:
+        # A bright wall/cabinet/window continuing to the right screen edge
+        # is map furniture, not a floating YES/NO panel. Only a distinctly
+        # bounded interior overlay can veto an otherwise verified field box.
+        if (lo>=155 and 200<=hi<238 and hi-lo>=36 and row+8<110
+                and sum(white(p) for p in colors(row+8)[lo:hi])>=hi-lo-5):
             return None
     # Text region only; exclude animated map background from stall identity.
     text=b"".join(rgb[(i*240+12)*3:(i*240+228)*3] for i in range(121,151))
