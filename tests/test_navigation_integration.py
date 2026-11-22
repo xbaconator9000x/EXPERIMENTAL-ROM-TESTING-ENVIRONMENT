@@ -140,6 +140,56 @@ class NativeRecoveryIntegrationTests(unittest.TestCase):
         self.assertTrue(last.get("navigation_recovery"))
         self.assertIn("navigation_memory",meta)
 
+    def test_existing_explorer_executes_starter_npc_skill_without_qwen(self):
+        from core.firered import Field
+        from core.jj_explore import Explorer as ActualExplorer
+
+        class FieldAdapter(LocalAdapter):
+            def candidate(self,rgb):
+                return (Field((1,2),(1,1),6,6,(0,)*36),
+                        0x08001235,{(3,1)})
+            def verified_field(self,c,meta):
+                return c is not None
+
+        class PartyAcceptance(LocalAcceptance):
+            enabled=True
+            def read_party(self,live):return []
+
+        class InventoryBattles(LocalBattles):
+            def bag(self,live):return {"balls":[],"items":[]}
+
+        class EventExplorer(ActualExplorer):
+            def inspect(self,candidate,meta):
+                return ([{"kind":"npc","x":3,"y":1,"id":1,"gfx":12},
+                         {"kind":"warp","x":4,"y":4,"id":0,"destination":[3,4]}],"RIGHT")
+
+        model=CountingModel()
+        sha="a"*64
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            runner=root/"runner";runner.write_bytes(b"native fake")
+            with ExitStack() as stack:
+                for name,value in (
+                    ("Live",LocalLive),("Adapter",FieldAdapter),
+                    ("BattleAdapter",InventoryBattles),("MenuDriver",LocalMenus),
+                    ("Explorer",EventExplorer),("Acceptance",PartyAcceptance),
+                    ("JJ_RELEASES",{sha})
+                ):
+                    stack.enter_context(patch("core.autoplay."+name,value))
+                stack.enter_context(patch("core.autoplay.try_catalog",return_value=None))
+                stack.enter_context(patch("core.autoplay.open_profile",return_value=(None,None)))
+                status,meta,rgb=play(runner,root/"rom",sha,
+                     "Find first story NPC",root,model,max_decisions=1)
+        self.assertEqual(status,"BUDGET_REACHED")
+        self.assertEqual(model.calls,0)
+        last=meta["history"][-1]
+        self.assertEqual(last["source"],"native_explore")
+        self.assertEqual(last["actions"],[{"button":"RIGHT","frames":1}])
+        self.assertEqual(meta["world_model"]["maps"]["1:2"]["event_kinds"],
+                         {"npc":1,"warp":1})
+        self.assertEqual(meta["world_model"]["edges"],[])
+        self.assertNotIn("skill_outcomes",meta["world_model"])
+
     def test_menu_blocks_all_automatic_navigation_recovery(self):
         meta,calls=self.run_sample(menu=True)
         self.assertEqual(calls,1)
