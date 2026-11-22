@@ -137,8 +137,11 @@ def rank(meta,choices,party_count,*,current_map=None,task_name="explore"):
         kind=event["kind"]
         dest=map_key(event.get("destination"))
         edge=(current_map,dest)
-        if party_count==0:purpose=0 if kind=="npc" else 1
-        elif task_name=="interact":purpose=0 if kind=="npc" else 3
+        # Before the first Pokémon, a static table Poké Ball may be a
+        # background map event rather than a live NPC. Prefer verified,
+        # reachable background interactions before revisiting a door.
+        if party_count==0:purpose=0 if kind=="bg" else 1 if kind=="npc" else 2
+        elif task_name=="interact":purpose=0 if kind in ("npc","bg") else 3
         elif task_name=="exit":purpose=0 if kind in ("warp","connection") else 3
         else:
             # New destinations expand the known world; afterward check
