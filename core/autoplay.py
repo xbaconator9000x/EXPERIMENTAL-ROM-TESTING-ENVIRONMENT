@@ -109,6 +109,7 @@ class OllamaVision:
     def __init__(self,model="qwen3-vl:4b-instruct",timeout=180,fallback="qwen3-vl:2b-instruct"):
         if not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,100}",model):raise ValueError("Invalid local model")
         self.structured=None;self.objective_state=None;self.navigation_hint=None;self.party_reference=None;self.battle_reference=None;self.world_reference=None;self.model=model;self.timeout=timeout;self.fallback=fallback;self.last_source="vision";self.failures=0
+        self.last_trace=[];self._ollama_metrics={}
         self.opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect)
     def _decide(self,rgb,goal,history,blocked,memory,model,rich):
         system=("You are a player using ordinary Game Boy Advance controller inputs, not code. "
@@ -132,7 +133,20 @@ class OllamaVision:
         req=urllib.request.Request("http://127.0.0.1:11434/api/chat",data=json.dumps(payload).encode(),headers={"Content-Type":"application/json"})
         with self.opener.open(req,timeout=self.timeout) as response:body=response.read(256*1024+1)
         if len(body)>256*1024:raise ValueError("Model reply too large")
-        return parse_decision(json.loads(body)["message"]["content"])
+        reply=json.loads(body)
+        # Ollama's server-side timings distinguish GPU model loading,
+        # image/prompt evaluation, and output token generation. Never log
+        # prompts, screenshot bytes, model replies or private game content.
+        self._ollama_metrics={}
+        for key in ("total_duration","load_duration","prompt_eval_duration",
+                    "eval_duration","prompt_eval_count","eval_count"):
+            value=reply.get(key) if isinstance(reply,dict) else None
+            if type(value) is int and 0<=value<=10**15:
+                if key.endswith("_duration"):
+                    self._ollama_metrics[key[:-9]+"_ms"]=round(value/1_000_000,2)
+                else:
+                    self._ollama_metrics[key]=value
+        return parse_decision(reply["message"]["content"])
 
     def decide(self,rgb,goal,history,blocked,memory=None):
         # Fast compact mode for known non-battle menus. Rich observation for
@@ -142,14 +156,28 @@ class OllamaVision:
         turn=history[-1].get("decision",len(history)) if history else 0
         rich=last in ("field","battle_command","battle_moves","bag","party") or turn%5==0 or bool(self.structured and (self.structured.get("observe_battle_menu") or self.structured.get("confirmation_required")))
         trials=[(self.model,rich),(self.model,False),(self.fallback,False)]
-        error=None
+        error=None;self.last_trace=[]
         for model,detail in dict.fromkeys(trials):
             if not model:continue
+            started=time.perf_counter()
+            self._ollama_metrics={}
+            record={"tier":"fallback" if model!=self.model else "primary",
+                    "mode":"rich" if detail else "compact"}
             try:
                 result=self._decide(rgb,goal,history,blocked,memory,model,detail)
-                self.last_source="vision_rich" if detail else ("vision_backup" if model!=self.model else "vision_compact")
-                self.failures=0;return result
-            except (ValueError,KeyError,OSError,TimeoutError) as exc:error=exc
+            except (ValueError,KeyError,OSError,TimeoutError) as exc:
+                record.update(result=type(exc).__name__,
+                              elapsed_ms=round((time.perf_counter()-started)*1000,2))
+                record.update(self._ollama_metrics)
+                self.last_trace.append(record)
+                error=exc
+                continue
+            record.update(result="accepted",
+                          elapsed_ms=round((time.perf_counter()-started)*1000,2))
+            record.update(self._ollama_metrics)
+            self.last_trace.append(record)
+            self.last_source="vision_rich" if detail else ("vision_backup" if model!=self.model else "vision_compact")
+            self.failures=0;return result
         self.failures+=1
         raise error or ValueError("No model available")
 
@@ -536,11 +564,19 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                             continue
                         decision=proposal
                     else:decision=infer()
-                    if isinstance(model,OllamaVision):source=model.last_source
+                    if isinstance(model,OllamaVision):
+                        source=model.last_source
+                        meta["last_model_trace"]={
+                            "decision":meta["decisions"]+1,
+                            "attempts":model.last_trace[-3:]}
                     model_elapsed=time.perf_counter()-mstart
                 decision=parse_decision(json.dumps(decision))
             except (ValueError,KeyError,OSError,TimeoutError) as exc:
                 meta["model_error"]=model_error(exc)
+                if isinstance(model,OllamaVision):
+                    meta["last_model_trace"]={
+                        "decision":meta["decisions"]+1,
+                        "attempts":model.last_trace[-3:]}
                 save_progress(path,identity,meta,live.save_state(),rgb)
                 report("MODEL_UNAVAILABLE_OR_INVALID",meta,rgb)
                 if control:
@@ -638,6 +674,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 state=live.save_state();live.close();live=open_live(state);session_frames=0
                 acceptance.reload(meta["decisions"],rgb,live.rgb())
                 adapter.attach(live)
+            input_started=time.perf_counter()
             try:
                 for action in actions:
                     live.step(BUTTONS[action["button"]],action["frames"])
@@ -690,6 +727,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                         acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
                         continue
                     return "EMULATOR_ERROR",meta,rgb
+            input_finished=time.perf_counter()
             if source=="native_battle":
                 intent=intent_from_battle(battle_before,decision,catalog)
                 if intent:meta["menu_intent"]=intent
@@ -754,6 +792,10 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if meta.get("action_batch"):entry["batch_remaining"]=len(meta["action_batch"]["remaining"])
             if field_after and adapter.verified_field(field_after,meta):entry["field_after"]={"map":list(field_after[0].map_id),"pos":list(field_after[0].pos)}
             entry["elapsed_seconds"]=round(time.perf_counter()-turn_started,3)
+            entry["timing"]={
+                "pre_input_ms":round((input_started-turn_started)*1000,2),
+                "emulator_ms":round((input_finished-input_started)*1000,2),
+                "post_input_ms":round((time.perf_counter()-input_finished)*1000,2)}
             if model_elapsed is not None:entry["model_seconds"]=round(model_elapsed,3)
             count_decision(meta,source,entry["elapsed_seconds"],model_elapsed,cost)
             if source=="fast_dialogue":
