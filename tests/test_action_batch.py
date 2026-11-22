@@ -1,6 +1,6 @@
 import unittest
 
-from core.action_batch import prepare, take, observe, frame_is_safe, invalidate
+from core.action_batch import prepare, momentum, take, observe, frame_is_safe, invalidate
 
 
 def screen():
@@ -79,6 +79,47 @@ class BatchTests(unittest.TestCase):
         meta = {"action_batch": plan}
         self.assertFalse(observe(meta, before, sudden_battle))
         self.assertNotIn("action_batch", meta)
+
+    def test_visual_momentum_requires_two_proven_directional_steps(self):
+        a="a"*64;b="b"*64;c="c"*64
+        history=[{"before":a,"after":b,"actions":[{"button":"LEFT","frames":16}]},
+                 {"before":b,"after":c,"actions":[{"button":"LEFT","frames":16}]}]
+        d=proposal(stage="other",buttons=("LEFT",))
+        chosen,queue=momentum(d,"vision_compact",history,field_witness=True)
+        self.assertEqual(chosen["actions"],[{"button":"LEFT","frames":16}])
+        self.assertEqual(len(queue["remaining"]),3)
+        _,verified=momentum(d,"vision_rich",history,field_witness=True,native_verified=True)
+        self.assertEqual(len(verified["remaining"]),9)
+        _,none=momentum(d,"vision_compact",history,field_witness=False)
+        self.assertIsNone(none)
+        _,none=momentum(d,"vision_compact",history[:1],field_witness=True)
+        self.assertIsNone(none)
+
+    def test_momentum_aborts_on_menu_dialogue_or_no_progress(self):
+        h=[{"before":"a","after":"b","actions":[{"button":"RIGHT","frames":16}]},
+           {"before":"b","after":"c","actions":[{"button":"RIGHT","frames":16}]}]
+        d=proposal(buttons=("RIGHT",))
+        for opts in ({"menu":True},{"battle":True}):
+            _,q=momentum(d,"vision_compact",h,field_witness=True,**opts)
+            self.assertIsNone(q)
+        _,q=momentum(proposal(buttons=("A",)),"vision_compact",h,field_witness=True)
+        self.assertIsNone(q)
+        _,q=momentum(d,"vision_compact",h,field_witness=False)
+        self.assertIsNone(q)
+        stale=[h[0],{**h[1],"after":"b"}]
+        _,q=momentum(d,"vision_compact",stale,field_witness=True)
+        self.assertIsNone(q)
+        stale=[h[0],{**h[1],"actions":[{"button":"LEFT","frames":16}]}]
+        _,q=momentum(d,"vision_compact",stale,field_witness=True)
+        self.assertIsNone(q)
+        # The native frame guard still stops a preplanned run at a wall.
+        _,q=momentum(d,"vision_compact",h,field_witness=True)
+        first=screen();second=patch_frame(first)
+        meta={"action_batch":q}
+        self.assertTrue(observe(meta,first,second))
+        self.assertIsNotNone(take(meta,second,allowed=True))
+        self.assertFalse(observe(meta,second,second))
+        self.assertNotIn("action_batch",meta)
 
     def test_remote_change_and_stale_screen_abort(self):
         first = screen()
