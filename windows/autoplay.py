@@ -148,7 +148,22 @@ def main():
                     if upstream:identity["upstream"]=UPSTREAM_COMMIT
                     with ControlPoller(remote,number,job["sha256"],folder,identity,RUNNER,rom) as control:
                         if parked:
-                            control.review=True
+                            # Native script/dialogue review can now run the
+                            # bounded automated recovery ladder. Old terminal
+                            # reviews of other kinds still require supervision,
+                            # and an exhausted ladder never restarts on install.
+                            prior_meta=prior[0]
+                            prior_review=prior_meta.get("review",{})
+                            prior_recovery=prior_meta.get("review_recovery",{})
+                            auto_recover=(not upstream and
+                                isinstance(prior_review,dict) and
+                                prior_review.get("scene")=="native_script_locked" and
+                                not (isinstance(prior_recovery,dict) and
+                                     prior_recovery.get("status") in
+                                     ("EXHAUSTED","FAILED")))
+                            control.review=not auto_recover
+                            if auto_recover:
+                                print(f"#{number}: bounded native review recovery enabled",flush=True)
                             # Only after the control path is constructed do we
                             # mark the old terminal review as supervised.
                             done.unlink()
