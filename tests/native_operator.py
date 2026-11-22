@@ -1,6 +1,7 @@
 """Real native mGBA control acceptance on original synthetic test ROM only."""
 import hashlib
 import json
+import os
 import tempfile
 from pathlib import Path
 from core.live import Live
@@ -9,7 +10,7 @@ from core.operator_control import OperatorControl,validate_command
 
 root=Path(__file__).resolve().parent.parent
 rom=root/"build"/"synthetic.gba"
-runner=root/"build"/"live_runner"
+runner=root/"build"/("live_runner.exe" if os.name=="nt" else "live_runner")
 sha=digest(rom.read_bytes())
 identity={"rom":sha,"runner":digest(runner.read_bytes()),"goal":"native synthetic operator smoke","model":"fixture"}
 def command(action,args=None):
