@@ -65,7 +65,7 @@ class ControlPoller:
                         packet={"id":id,"sha256":hashlib.sha256(raw).hexdigest(),
                                 "part":part+1,"parts":total,"base64":encoded[part*44000:(part+1)*44000]}
                         self.remote.request("/issues/"+str(self.issue)+"/comments",
-                                            {"body":"ROM-CONTROL-FRAME v1\\n"+json.dumps(packet,separators=(",",":"))})
+                                            {"body":"ROM-CONTROL-FRAME v1\n"+json.dumps(packet,separators=(",",":"))})
             except (OSError,ValueError,KeyError):
                 pass
 
