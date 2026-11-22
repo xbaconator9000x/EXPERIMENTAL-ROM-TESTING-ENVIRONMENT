@@ -15,7 +15,7 @@ from windows.host import ROOT, LIBRARY, REPO, fingerprint
 from windows.queue_host import Remote
 from windows.operator_queue import ControlPoller
 from core.upstream_port import UPSTREAM_COMMIT
-from core.jj_unattended import legacy_script_resume_candidate
+from core.jj_unattended import legacy_script_resume_candidate, legacy_operator_door_cycle
 
 TITLE="[ROM-PLAY v1]"
 UPSTREAM_TITLE="[ROM-PLAY upstream v2]"
@@ -162,7 +162,8 @@ def main():
                                  not (isinstance(prior_recovery,dict) and
                                       prior_recovery.get("status") in
                                       ("EXHAUSTED","FAILED"))) or
-                                legacy_script_resume_candidate(prior_meta)))
+                                legacy_script_resume_candidate(prior_meta) or
+                                legacy_operator_door_cycle(prior_meta)))
                             control.review=not auto_recover
                             if auto_recover:
                                 print(f"#{number}: bounded native review recovery enabled",flush=True)
