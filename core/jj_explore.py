@@ -56,7 +56,7 @@ def options(field,occupied,events,attempted,blocked=(),avoid_warps=None):
         for target,direction in goals:
             if target==field.pos and target not in blocked:path=[]
             else:
-                path=find_path(field.pos,target,lambda x,y:field.passable(x,y) and (x,y) not in occupied and (x,y) not in blocked and ((x,y) not in warps or (x,y)==target),field.width,field.height)
+                path=find_path(field.pos,target,lambda x,y:field.passable(x,y) and (x,y) not in occupied and (x,y) not in blocked and ((x,y) not in warps or (e["kind"]=="warp" and (x,y)==target)),field.width,field.height)
                 if path is None:continue
             candidates.append((len(path),key,tuple(target),direction,e,path))
     return sorted(candidates,key=lambda c:(c[0],c[1],c[2]))
@@ -114,7 +114,7 @@ class Explorer:
                 action=goal["facing"];expected=f.pos;kind="face"
             else:action="A";expected=None;kind="interact"
         else:
-            path=find_path(f.pos,target,lambda x,y:f.passable(x,y) and (x,y) not in occupied and (x,y) not in blocked and ((x,y) not in warps or (x,y)==target),f.width,f.height)
+            path=find_path(f.pos,target,lambda x,y:f.passable(x,y) and (x,y) not in occupied and (x,y) not in blocked and ((x,y) not in warps or (event["kind"]=="warp" and (x,y)==target)),f.width,f.height)
             if not path:return None
             action=path[0].upper();dx,dy=DIR[action];expected=(f.pos[0]+dx,f.pos[1]+dy);kind="move"
         frames=(probe_frames(meta,f.map_id,expected) if kind=="move" else (1 if action!="A" else 5))
