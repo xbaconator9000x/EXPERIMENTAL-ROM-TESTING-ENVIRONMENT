@@ -7,7 +7,7 @@ is returned to the vision planner instead of replaying A on stale RAM.
 import hashlib
 from pathlib import Path
 from core.jj_battle import anchors,health_percent
-from core.jj_fast import SHA,MAIN,PARTY,decode_party,u
+from core.jj_fast import ADMITTED_SHA256S,MAIN,PARTY,decode_party,u
 from core.firered import span
 from core.live import LiveError
 
@@ -93,7 +93,7 @@ class MenuDriver:
             self.party_ok=bool(p.party_cursor and p.party_order and p.party_cb)
             self.sha=sha
             return
-        if sha!=SHA or not battle.callbacks:return
+        if sha not in ADMITTED_SHA256S or not battle.callbacks:return
         try:
             data=Path(rom).read_bytes();self.rom_size=len(data)
             if hashlib.sha256(data).hexdigest()!=sha:return
