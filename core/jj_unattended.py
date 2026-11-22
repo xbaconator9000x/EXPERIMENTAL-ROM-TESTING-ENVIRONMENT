@@ -173,6 +173,32 @@ def script_settle(meta,screen,*,limit=32):
             "actions":[{"button":"WAIT","frames":24}],"review":False}
 
 
+def legacy_operator_door_cycle(meta):
+    """Old false-cycle checkpoint after operator movement into a script/warp.
+
+    Reopen only a precisely diagnosed historical review caused by recovery
+    history masquerading as native navigation. The next live loop still must
+    validate lock state, text and field structures. No map/quest claim is made.
+    """
+    if not isinstance(meta,dict) or meta.get("recovery_resume"):
+        return False
+    review=meta.get("review",{})
+    diag=meta.get("native_diagnostics",{})
+    history=meta.get("history",[])
+    recovery_state=meta.get("review_recovery",{})
+    if not (isinstance(review,dict) and
+            review.get("scene")=="native_script_settle" and
+            review.get("reason")=="repeated screen cycle; alternative action required" and
+            meta.get("operator_last_action")=="input" and
+            isinstance(diag,dict) and diag.get("field_reason")=="SCRIPT_CONTROL_LOCK" and
+            isinstance(history,list) and isinstance(recovery_state,dict) and
+            recovery_state.get("status") not in ("EXHAUSTED","FAILED")):
+        return False
+    rows=[row for row in history[-32:] if isinstance(row,dict)]
+    return (bool(rows) and rows[-1].get("source")=="native_script_settle" and
+            any(row.get("source")=="review_recovery" for row in rows))
+
+
 def legacy_script_resume_candidate(meta):
     """Recognise one old checkpoint stranded after successful script recovery.
 
