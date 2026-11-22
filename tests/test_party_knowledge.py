@@ -220,6 +220,15 @@ class PartyKnowledgeTests(unittest.TestCase):
         self.assertEqual(decision["objective"],"Open party to switch safely")
         intent=intent_from_battle(state,decision,Catalog)
         self.assertEqual(intent["slot"],2)
+        # If already in the move menu when critically hurt, back out rather
+        # than committing an attack while a safer party member exists.
+        move_state={**state,"stage":"battle_moves","cursor":1,
+                    "callback":0x0802EA11}
+        back=policy.action(move_state,{"battle_proof":[0x0802EA11]})
+        self.assertEqual(back[0]["actions"],[{"button":"B","frames":5}])
+        # No healthy backup and no items: never fabricate a switch target.
+        empty={**state,"party":[party[0]]}
+        self.assertIsNone(policy.action(empty,{"battle_proof":[0x08030611]}))
 
     def test_unknown_move_effect_is_not_promoted_to_safe_macro(self):
         state=battle([mon()])
