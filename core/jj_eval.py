@@ -90,7 +90,7 @@ def _metric_delta(before,after,key):
     return round(y-x,3) if isinstance(x,float) or isinstance(y,float) else y-x
 
 
-def _events(meta,identity,start_decision):
+def _events(meta,identity,start_decision,baseline=None):
     """Validate the identity and each new acceptance event; never trust counts."""
     ledger=meta.get("native_acceptance",{})
     if not isinstance(ledger,dict) or ledger.get("profile_admitted") is not True:
@@ -103,10 +103,27 @@ def _events(meta,identity,start_decision):
     events=ledger.get("events")
     if not isinstance(events,list):return None,"native_events_missing"
     accepted=[];seen=set()
+    old_rows=baseline.get("events",[]) if isinstance(baseline,dict) else []
+    if not isinstance(old_rows,list):old_rows=[]
+    old_reloads=[e.get("detail",{}).get("ordinal",0)
+                 for e in old_rows if isinstance(e,dict) and e.get("kind")=="checkpoint_reload"
+                 and isinstance(e.get("detail",{}),dict)]
+    old_ordinal=max((v for v in old_reloads if type(v) is int and v>=0),default=0)
     for row in events:
         if not isinstance(row,dict) or row.get("kind") not in EVENTS:continue
         decision=row.get("decision")
-        if type(decision) is not int or decision<=start_decision:continue
+        if type(decision) is not int:continue
+        if decision<=start_decision:
+            # A native cold reload happens *at* the start decision. Accept
+            # only a strictly new ordinal relative to the source checkpoint;
+            # a previously saved reload event can never satisfy this test.
+            if row["kind"]!="checkpoint_reload" or decision!=start_decision:
+                continue
+            detail=row.get("detail",{})
+            if (not isinstance(detail,dict)
+                    or type(detail.get("ordinal")) is not int
+                    or detail["ordinal"]<=old_ordinal):
+                continue
         before,after=row.get("before"),row.get("after")
         if (not isinstance(before,str) or not SHA.fullmatch(before)
                 or not isinstance(after,str) or not SHA.fullmatch(after)
@@ -118,12 +135,20 @@ def _events(meta,identity,start_decision):
                     or _map(detail.get("to")) is None
                     or _map(detail["from"])==_map(detail["to"])):
                 continue
+        if row["kind"]=="checkpoint_reload":
+            if before!=after or row.get("source")!="native_restart":
+                continue
+            detail=row.get("detail",{})
+            if (not isinstance(detail,dict)
+                    or type(detail.get("ordinal")) is not int
+                    or detail["ordinal"]<1):
+                continue
         if row["kind"]=="wild_capture":
             detail=row.get("detail",{})
             if (not isinstance(detail,dict) or type(detail.get("species")) is not int
                     or not 1<=detail["species"]<=411):
                 continue
-        key=(row["kind"],decision,before,after)
+        key=(row["kind"],decision,before,after,row.get("detail",{}).get("ordinal") if isinstance(row.get("detail",{}),dict) else None)
         if key not in seen:
             seen.add(key);accepted.append(row)
     return accepted,None
@@ -183,7 +208,7 @@ def evaluate(scenario,baseline,final,identity,*,status="BUDGET_REACHED",audit=No
     start,end=baseline.get("decisions"),final.get("decisions")
     if type(start) is not int or type(end) is not int or not 0<=start<=end<=10000000:
         raise ValueError("Invalid decision interval")
-    events,error=_events(final,identity,start)
+    events,error=_events(final,identity,start,baseline.get("native_acceptance"))
     counts={k:0 for k in EVENTS}
     if events is not None:
         for event in events:counts[event["kind"]]+=1
