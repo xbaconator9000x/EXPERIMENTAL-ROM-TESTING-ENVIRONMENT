@@ -1,0 +1,131 @@
+"""Private outbound-only GitHub command poller; native emulator stays in main thread."""
+import json
+import os
+from pathlib import Path
+import threading
+import time
+from core.operator_control import validate_command,OperatorControl
+from windows.queue_host import validate as validate_test, run as run_test, RUNNER as TEST_RUNNER
+from windows.host import ROOT,LIBRARY,fingerprint
+
+COMMAND_PREFIX="ROM-CONTROL v1\n"
+ACK_PREFIX="ROM-CONTROL-ACK v1\n"
+
+class ControlPoller:
+    def __init__(self,remote,issue,sha,folder,identity,runner,rom):
+        self.remote=remote;self.issue=issue;self.sha=sha;self.folder=Path(folder)
+        self.identity=identity;self.runner=runner;self.rom=rom
+        self.stop=threading.Event()
+        self.thread=None
+        self.control=OperatorControl(folder,identity,runner,rom,sha,ack=self.ack)
+        self.cursor_file=self.folder/"operator-cursor.json"
+        self.seen=0
+        if self.cursor_file.exists():
+            row=json.loads(self.cursor_file.read_text(encoding="utf-8"))
+            if row.get("issue")!=issue or row.get("sha256")!=sha or type(row.get("last_seen")) is not int:
+                raise ValueError("Operator cursor identity mismatch")
+            self.seen=row["last_seen"]
+        self.test_thread=None
+        self.test_stop=threading.Event()
+        self.last_feedback=time.monotonic()
+        self.poll_failures=0
+
+    def save_cursor(self):
+        tmp=self.cursor_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"issue":self.issue,"sha256":self.sha,"last_seen":self.seen}),encoding="ascii")
+        os.replace(tmp,self.cursor_file)
+
+    def ack(self,id,status,action,meta=None,rgb=None,reason=None):
+        # Never include emulator states, local paths or secrets.
+        body={"id":id,"status":status,"action":action}
+        if meta is not None:body["decisions"]=meta.get("decisions")
+        if rgb is not None:
+            import hashlib
+            body["screen"]=hashlib.sha256(rgb).hexdigest()
+        if reason:body["reason"]=reason
+        try:
+            self.remote.verify()
+            self.remote.request("/issues/"+str(self.issue)+"/comments",
+                                {"body":ACK_PREFIX+json.dumps(body,separators=(",",":"))})
+        except (OSError,ValueError,KeyError):
+            # Local audit is authoritative for execution. Network delivery may retry
+            # only manually, never by replaying the native input.
+            pass
+
+    def _test_worker(self,id,job):
+        try:
+            status=run_test(job,self.test_stop,runner=TEST_RUNNER,library=LIBRARY,
+                            timeout=600,allow_v2=False)
+            self.ack(id,"EXECUTED" if status=="PASS" else "TEST_"+status,"test")
+        except (OSError,ValueError,RuntimeError):
+            self.ack(id,"FAILED","test",reason="HOST_ERROR")
+
+    def dispatch_test(self,id,cmd):
+        if self.test_thread is not None and self.test_thread.is_alive():
+            self.ack(id,"FAILED","test",reason="TEST_ALREADY_RUNNING");return
+        number=cmd["args"]["issue"]
+        row=self.remote.request("/issues/"+str(number))
+        if row.get("title")!="[ROM-TEST v1]" or row.get("state")!="open" or row.get("user",{}).get("login","").lower()!=self.remote.author:
+            self.ack(id,"FAILED","test",reason="TEST_ISSUE_NOT_AUTHORIZED");return
+        job=validate_test(row.get("body"))
+        if job["version"]!=1 or job["sha256"]!=self.sha:
+            self.ack(id,"FAILED","test",reason="TEST_ROM_MISMATCH");return
+        self.test_stop.clear()
+        self.test_thread=threading.Thread(target=self._test_worker,args=(id,job),daemon=True)
+        self.test_thread.start()
+        self.ack(id,"ACCEPTED","test")
+
+    def poll_once(self):
+        self.remote.verify() # includes mandatory private repository identity
+        details=self.remote.request("/issues/"+str(self.issue))
+        if details.get("state")!="open":return
+        count=details.get("comments",0)
+        if type(count) is not int or count<0:return
+        # The latest two pages cover recent commands despite high-volume frame
+        # reporting. At most 200 comments are decoded, never all evidence chunks.
+        page=max(1,(count+99)//100)
+        rows=[]
+        for p in range(max(1,page-1),page+1):
+            rows.extend(self.remote.request("/issues/"+str(self.issue)+"/comments?per_page=100&page="+str(p)))
+        rows.sort(key=lambda x:x.get("id",0))
+        if not self.cursor_file.exists():
+            self.seen=max((x["id"] for x in rows if type(x.get("id")) is int),default=0)
+            self.save_cursor()
+            return
+        for comment in rows:
+            id=comment.get("id")
+            if type(id) is not int or id<=self.seen:continue
+            # Cursor is durable BEFORE dispatch; a crash can lose a command,
+            # but can never invisibly repeat a reset or state load.
+            self.seen=id;self.save_cursor()
+            raw=comment.get("body")
+            if not isinstance(raw,str) or not raw.startswith(COMMAND_PREFIX):continue
+            if comment.get("user",{}).get("login","").lower()!=self.remote.author or comment.get("author_association") not in ("OWNER","MEMBER","COLLABORATOR"):
+                continue
+            try:cmd=validate_command(raw[len(COMMAND_PREFIX):],self.sha)
+            except (ValueError,TypeError,KeyError):
+                self.ack(id,"REJECTED","invalid",reason="INVALID_SCHEMA");continue
+            if cmd["action"]=="test":
+                try:self.dispatch_test(id,cmd)
+                except (ValueError,OSError,KeyError):self.ack(id,"FAILED","test",reason="FETCH_OR_VALIDATION")
+            else:
+                try:self.control.offer(id,cmd);self.ack(id,"ACCEPTED",cmd["action"])
+                except Exception:self.ack(id,"FAILED",cmd["action"],reason="CONTROL_QUEUE_FULL")
+
+    def run(self):
+        while not self.stop.is_set():
+            try:self.poll_once();self.poll_failures=0
+            except (OSError,ValueError,KeyError,TypeError):
+                self.poll_failures=min(self.poll_failures+1,6)
+            self.stop.wait(min(60,5*(2**min(self.poll_failures,3))))
+
+    def __enter__(self):
+        self.thread=threading.Thread(target=self.run,daemon=True)
+        self.thread.start()
+        return self.control
+
+    def __exit__(self,*args):
+        self.stop.set()
+        if self.thread is not None:self.thread.join(timeout=20)
+        self.test_stop.set()
+        if self.test_thread is not None:self.test_thread.join(timeout=2)
