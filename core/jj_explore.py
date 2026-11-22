@@ -372,7 +372,11 @@ class Explorer:
             path=_event_path(f,occupied,events,target,event["kind"],blocked)
             if not path:return None
             action=path[0].upper();dx,dy=DIR[action];expected=(f.pos[0]+dx,f.pos[1]+dy);kind="move"
-        frames=(probe_frames(meta,f.map_id,expected) if kind=="move" else (1 if action!="A" else 5))
+        # A boundary crossing may first turn the avatar without moving.
+        # Retry that *same verified exit* with a bounded hold, never Qwen.
+        frames=(probe_frames(meta,f.map_id,expected) if kind=="move" else
+                (12 if goal.get("cross_retry") else 1) if kind=="cross" else
+                (1 if action!="A" else 5))
         return {"scene":"native_exploration","objective":("Interact with observed map event" if event["kind"] in ("npc","bg") else "Travel toward observed connection" if event["kind"]=="connection" else "Walk onto observed trigger" if event["kind"]=="coord" else "Approach observed warp"),"actions":[{"button":action,"frames":frames}],"review":False},(kind,expected)
     def scout(self,candidate,meta,info,*,limit=384):
         """Select an unvisited passable native tile, never an unknown event.
@@ -483,6 +487,8 @@ class Explorer:
                     "trigger_tile_entered" if attempted_entry and
                        tuple(successor.pos)==tuple(goal["target"]) else
                     "interaction_issued" if kind=="interact" else
+                    "crossing_stationary" if kind=="cross" and same_map
+                        and successor.pos==f.pos else
                     "crossing_issued" if kind=="cross" else
                     "trigger_not_entered")
             witness={"event":goal["key"],"kind":goal["event"]["kind"],
@@ -490,6 +496,20 @@ class Explorer:
             rows=meta.setdefault("native_event_witnesses",[])
             rows.append(witness)
             meta["native_event_witnesses"]=rows[-48:]
+        if (kind=="cross" and after is not None
+                and self.adapter.verified_field(before,meta)
+                and self.adapter.verified_field(after,meta)
+                and after[0].map_id==f.map_id
+                and after[0].pos==f.pos and after[1]==before[1]
+                and goal.get("cross_retry",0)==0
+                and goal["remaining"]>1):
+            # A one-frame directional press often faces the edge but does not
+            # actually walk across it. Only an unchanged *native verified*
+            # callback/map/position permits one 12-frame follow-up input.
+            # Do not mark the event attempted or publish pending_crossing yet.
+            goal["cross_retry"]=1
+            goal["remaining"]-=1
+            return
         if kind=="move" and expected is not None:
             outcome=record_tile_step(meta,before,after,command,
                 verified_before=self.adapter.verified_field(before,meta),

@@ -358,6 +358,65 @@ class TestExplorer(unittest.TestCase):
         self.assertEqual(second["actions"],[{"button":"A","frames":5}])
         self.assertEqual(cmd[0],"interact")
 
+    def test_connection_turn_only_retries_before_claiming_attempt(self):
+        f=Field((43,1),(0,1),4,3,(0,)*12)
+        exit_event={"kind":"connection","x":0,"y":1,"id":7,
+                    "direction":"LEFT","destination":[43,2]}
+        before=(f,0x08001235,set())
+        info=([exit_event],"UP")
+        ex=Explorer(MockAdapter());meta={"native_party_count":3}
+        self.assertTrue(ex.request(before,meta,info,"exit"))
+        first,command=ex.next(before,meta,info)
+        self.assertEqual(command,("cross",None))
+        self.assertEqual(first["actions"],[{"button":"LEFT","frames":1}])
+        ex.finish(meta,before,before,command)
+        self.assertIn("event_goal",meta)
+        self.assertEqual(meta["event_goal"]["cross_retry"],1)
+        self.assertEqual(meta["native_event_witnesses"][-1]["result"],
+                         "crossing_stationary")
+        self.assertNotIn("pending_crossing",meta)
+        self.assertEqual(meta.get("event_attempts",[]),[])
+        retry,command=ex.next(before,meta,info)
+        self.assertEqual(retry["actions"],[{"button":"LEFT","frames":12}])
+        arrived=(Field((43,2),(3,1),4,3,f.tiles),0x08001235,set())
+        ex.finish(meta,before,arrived,command)
+        self.assertNotIn("event_goal",meta)
+        self.assertEqual(meta["map_transitions"][0]["to"],[43,2])
+        self.assertEqual(meta["pending_crossing"]["destination"],[43,2])
+        self.assertEqual(meta["event_attempts"],[event_key(f,exit_event)])
+
+    def test_connection_second_noop_exhausts_without_repeat_loop(self):
+        f=Field((43,1),(0,1),4,3,(0,)*12)
+        event={"kind":"connection","x":0,"y":1,"id":7,
+               "direction":"LEFT","destination":[43,2]}
+        before=(f,0x08001235,set())
+        ex=Explorer(MockAdapter());meta={}
+        info=([event],None)
+        self.assertTrue(ex.request(before,meta,info,"exit"))
+        _,command=ex.next(before,meta,info)
+        ex.finish(meta,before,before,command)
+        self.assertIsNotNone(ex.next(before,meta,info))
+        ex.finish(meta,before,before,command)
+        self.assertNotIn("event_goal",meta)
+        self.assertEqual(meta["event_attempts"],[event_key(f,event)])
+        self.assertEqual([x["result"] for x in meta["native_event_witnesses"]],
+                         ["crossing_stationary","crossing_stationary"])
+
+    def test_unverified_or_callback_changed_crossing_never_retries(self):
+        f=Field((43,1),(0,1),4,3,(0,)*12)
+        event={"kind":"connection","x":0,"y":1,"id":7,
+               "direction":"LEFT","destination":[43,2]}
+        before=(f,0x08001235,set())
+        for after in (None,(f,0x08002223,set())):
+            with self.subTest(after=after):
+                ex=Explorer(MockAdapter());meta={}
+                info=([event],None)
+                self.assertTrue(ex.request(before,meta,info,"exit"))
+                _,command=ex.next(before,meta,info)
+                ex.finish(meta,before,after,command)
+                self.assertNotIn("event_goal",meta)
+                self.assertEqual(meta["event_attempts"],[event_key(f,event)])
+
     def test_event_approach_and_interaction(self):
         f,npc,warp=self.setup();c=(f,1,{(3,1)})
         ex=Explorer(MockAdapter());m={};info=([npc,warp],"RIGHT")
