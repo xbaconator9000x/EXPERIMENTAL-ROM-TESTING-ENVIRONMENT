@@ -139,6 +139,35 @@ def script_settle(meta,screen,*,limit=8):
             "actions":[{"button":"WAIT","frames":24}],"review":False}
 
 
+def exceptional_vision(meta,field,reason,*,battle=False,menu=False,dialogue=False,limit=1):
+    """Allow vision only for an unknown scene, never an admitted field.
+
+    A verified native scene must use event/path/field logic. Real battles,
+    menus and text overlays may require separate screen classification.
+    After a previously verified field disappears, just one exceptional
+    inference is permitted per map/party and failure reason until new native
+    evidence appears. Changing screenshot pixels cannot replenish calls.
+    """
+    if battle or menu or dialogue:
+        return True
+    if field is not None:
+        return False
+    previous=meta.get("last_native_field")
+    if not isinstance(previous,dict) or not isinstance(previous.get("map"),list):
+        # Title/intro before the first valid field is a true unknown stage.
+        return True
+    key={"map":previous["map"],"party_count":meta.get("native_party_count"),
+         "field_reason":reason}
+    state=meta.get("exceptional_vision")
+    if not isinstance(state,dict) or any(state.get(k)!=v for k,v in key.items()):
+        state=dict(key,calls=0)
+        meta["exceptional_vision"]=state
+    if type(state.get("calls")) is not int or not 0<=state["calls"]<limit:
+        return False
+    state["calls"]+=1
+    return True
+
+
 def native_vision_budget(meta,field,*,limit=3):
     """Cap expensive field vision when verified native skills run out.
 

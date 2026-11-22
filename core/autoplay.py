@@ -32,7 +32,7 @@ from core.jj_tile_memory import refresh_on_verified_arrival
 from core.jj_menus import MenuDriver,intent_from_battle
 from core.jj_runtime import NATIVE, animation_wait, record_field, count_decision, recovery_allowed
 from core.jj_connections import observe_arrival
-from core.jj_unattended import recovery, oscillation, field_hint, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id, bootstrap, vision_stall, script_settle, native_vision_budget
+from core.jj_unattended import recovery, oscillation, field_hint, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id, bootstrap, vision_stall, script_settle, exceptional_vision
 
 BUTTONS={"A":1,"B":2,"SELECT":4,"START":8,"RIGHT":16,"LEFT":32,"UP":64,"DOWN":128,"R":256,"L":512,"WAIT":0}
 SCHEMA={"type":"object","additionalProperties":False,"required":["scene","objective","actions","review"],"properties":{
@@ -395,12 +395,19 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     (native_motion and (field_hint(history) or oscillation(history,screen))))
             if isinstance(model,OllamaVision):
                 model.navigation_hint=learned_navigation(meta,screen,history) if nav_allowed else None
+            # A structurally valid field is owned exclusively by native
+            # route/event/scout skills, even before full movement calibration.
+            # A visible dialogue, battle or menu is handled separately.
+            field_owned=(sha in JJ_RELEASES and field_before is not None
+                and battle_before is None and menu_before is None
+                and not meta.get("menu_intent")
+                and ordinary_dialogue(rgb) is None)
             decision=guidance(meta,screen)
             cached=None
             if decision is None:
-                cached=take_action_batch(meta,rgb,allowed=(battle_before is None and menu_before is None
+                cached=take_action_batch(meta,rgb,allowed=(sha not in JJ_RELEASES
+                    and battle_before is None and menu_before is None
                     and ordinary_dialogue(rgb) is None and not meta.get("menu_intent")
-                    and (sha not in JJ_RELEASES or nav_allowed)
                     and not (control and (control.paused or control.review))))
                 if cached:decision=cached
             else:
@@ -489,34 +496,55 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                         continue
                     return "NEEDS_REVIEW",meta,rgb
                 decision=waiting;source="native_script_settle"
-            if decision is None and sha in JJ_RELEASES and battle_before is None and menu_before is None and not meta.get("menu_intent"):
+            if (decision is None and sha in JJ_RELEASES and not field_owned
+                    and battle_before is None and menu_before is None
+                    and not meta.get("menu_intent")):
                 decision=recovery(meta,screen,rgb,field_before,adapter.verified_field(field_before,meta))
                 if decision:source="field_recovery";meta.pop("event_goal",None);meta.pop("native_route",None)
-            if decision is None and nav_allowed:
+            if decision is None and nav_allowed and not field_owned:
                 learned=propose_navigation(meta,screen,history,allowed=True,candidate=field_before)
                 if learned:
                     decision=learned;source="field_recovery"
             if decision is None and field_before is not None and not adapter.verified_field(field_before,meta):
                 decision=bootstrap(meta,field_before,screen)
                 if decision:source="field_recovery"
-            if decision is None:
+            if decision is None and not field_owned:
                 decision=title_recovery(meta,rgb)
                 if decision:source="title_recovery"
-            if decision is None and max(rgb)-min(rgb)<8 and not any(h.get("source")=="transition_wait" for h in history[-2:]):
+            if decision is None and not field_owned and max(rgb)-min(rgb)<8 and not any(h.get("source")=="transition_wait" for h in history[-2:]):
                 decision={"scene":"transition","objective":"Wait for blank-screen animation","actions":[{"button":"WAIT","frames":120}],"review":False}
                 source="transition_wait"
             try:
-                if (decision is None and sha in JJ_RELEASES and field_verified and
-                        battle_before is None and menu_before is None and
-                        ordinary_dialogue(rgb) is None and not meta.get("menu_intent")
-                        and not native_vision_budget(meta,field_before)):
+                if decision is None and field_owned:
+                    # Never cede a known field to a screen-derived walking
+                    # plan. Even one improvised step can corrupt event/path
+                    # ordering; fail closed with a recoverable checkpoint.
+                    invalidate_action_batch(meta)
                     meta["review"]={
                         "scene":"native_navigation_exhausted",
                         "objective":meta.get("objective_state",{}).get("task","Advance story"),
-                        "reason":"native events and verified map-frontier navigation exhausted; bounded image fallback consumed",
+                        "reason":"native field is authoritative; no verified event, route or frontier action remains; Qwen movement disabled",
                         "native_event_probe":meta.get("native_event_probe"),
                         "native_scout":meta.get("native_scout"),
-                        "native_vision_budget":meta.get("native_vision_budget")}
+                        "model_calls_avoided":True}
+                    save_progress(path,identity,meta,live.save_state(),rgb)
+                    report("NEEDS_REVIEW",meta,rgb)
+                    if control:
+                        control.review=True
+                        live,meta,rgb,_=control.serve(live,meta,rgb,should_stop)
+                        if should_stop():return "STOPPED",meta,rgb
+                        acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
+                        continue
+                    return "NEEDS_REVIEW",meta,rgb
+                if decision is None and sha in JJ_RELEASES and not exceptional_vision(
+                        meta,field_before,getattr(adapter,"reason",""),
+                        battle=bool(battle_before),menu=bool(menu_before),
+                        dialogue=ordinary_dialogue(rgb) is not None):
+                    meta["review"]={
+                        "scene":"unclassified_game_state",
+                        "objective":meta.get("objective_state",{}).get("task","Advance story"),
+                        "reason":"unknown native state persists after one exceptional visual classification; no additional Qwen movement permitted",
+                        "field_reason":getattr(adapter,"reason","unknown")}
                     save_progress(path,identity,meta,live.save_state(),rgb)
                     report("NEEDS_REVIEW",meta,rgb)
                     if control:
@@ -609,7 +637,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if source.startswith("vision") and not decision["review"] and adapter.start_route(field_before,meta,decision.get("field_target")):
                 route=adapter.route_action(field_before,meta)
                 if route:decision,route_expected=route;source="native_route"
-            planned=policy(obs,goal,history,screen) if not decision["review"] and source not in ("remote_guidance","native_route","fast_dialogue","native_battle","native_explore","native_menu","native_battle_wait","field_recovery") else None
+            planned=policy(obs,goal,history,screen) if not decision["review"] and source not in ("remote_guidance","native_route","fast_dialogue","native_battle","native_explore","native_scout","native_menu","native_battle_wait","field_recovery") else None
             if planned and planned[0]:
                 decision={**decision,"actions":planned[0],"objective":planned[1][:240]};source="pokemon_policy"
             nav_blocked=False

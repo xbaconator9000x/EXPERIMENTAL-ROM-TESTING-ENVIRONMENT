@@ -5,6 +5,22 @@ from core.live import LiveError
 def history():
     return [{"before":"a" if i%2==0 else "b","after":"b" if i%2==0 else "a","scene":"hospital_room","actions":[{"button":"UP" if i%2==0 else "DOWN","frames":16}]} for i in range(12)]
 class Tests(unittest.TestCase):
+    def test_exceptional_vision_never_controls_native_field_and_is_bounded(self):
+        from core.firered import Field
+        from core.jj_unattended import exceptional_vision
+        field=(Field((43,1),(4,2),6,6,(0,)*36),0x08001235,set())
+        meta={"last_native_field":{"map":[43,1],"pos":[4,2]},"native_party_count":3}
+        self.assertFalse(exceptional_vision(meta,field,"FIELD_STRUCTURES_VALID"))
+        self.assertEqual([exceptional_vision(meta,None,"UNKNOWN") for _ in range(3)],
+                         [True,False,False])
+        # Flicker changes the screenshot, not the underlying scene/epoch.
+        self.assertTrue(exceptional_vision(meta,None,"UNKNOWN",menu=True))
+        self.assertFalse(exceptional_vision(meta,field,"FIELD_STRUCTURES_VALID"))
+        meta["last_native_field"]["pos"]=[5,2]
+        self.assertFalse(exceptional_vision(meta,None,"UNKNOWN"))
+        meta["last_native_field"]["map"]=[43,2]
+        self.assertTrue(exceptional_vision(meta,None,"UNKNOWN"))
+
     def test_verified_map_caps_expensive_vision_fallback(self):
         from core.firered import Field
         from core.jj_unattended import native_vision_budget

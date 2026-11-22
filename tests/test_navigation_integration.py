@@ -224,6 +224,47 @@ class NativeRecoveryIntegrationTests(unittest.TestCase):
         self.assertEqual(meta["history"][-1]["source"],"native_scout")
         self.assertEqual(meta["history"][-1]["actions"][0]["button"],"UP")
 
+    def test_verified_native_map_never_falls_back_to_qwen_or_stale_visual_batch(self):
+        from core.firered import Field
+        class FieldAdapter(LocalAdapter):
+            def candidate(self,rgb):
+                return (Field((43,1),(2,2),1,1,(0,)),
+                        0x08001235,set())
+            def verified_field(self,c,meta):return c is not None
+        class EventExplorer(LocalExplorer):
+            def inspect(self,candidate,meta):return ([],None)
+            def scout(self,candidate,meta,events):return None
+        sha="a"*64
+        model=CountingModel()
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);runner=root/"runner";runner.write_bytes(b"native fake")
+            initial=bytes((42,0,213))*38400
+            state={"decisions":1,"frames":120,"history":[],
+                   "native_vision_budget":{"map":[43,1],"party_count":3,"calls":0},
+                   "action_batch":{"version":1,"scene":"field",
+                       "objective":"old model path",
+                       "remaining":[{"button":"LEFT","frames":16}],
+                       "expected_screen":digest(initial)}}
+            identity={"rom":sha,"runner":hashlib.sha256(runner.read_bytes()).hexdigest(),
+                      "goal":"continue story","model":"fake"}
+            save_progress(root/"progress.bin",identity,state,bytes((42,)),initial)
+            with ExitStack() as stack:
+                for name,value in (("Live",LocalLive),("Adapter",FieldAdapter),
+                    ("BattleAdapter",LocalBattles),("MenuDriver",LocalMenus),
+                    ("Explorer",EventExplorer),("Acceptance",LocalAcceptance),
+                    ("JJ_RELEASES",{sha})):
+                    stack.enter_context(patch("core.autoplay."+name,value))
+                stack.enter_context(patch("core.autoplay.try_catalog",return_value=None))
+                stack.enter_context(patch("core.autoplay.open_profile",return_value=(None,None)))
+                status,meta,rgb=play(runner,root/"rom",sha,
+                    "continue story",root,model,max_decisions=2)
+        self.assertEqual(status,"NEEDS_REVIEW")
+        self.assertEqual(model.calls,0)
+        self.assertEqual(meta["decisions"],1)
+        self.assertNotIn("action_batch",meta)
+        self.assertEqual(meta["review"]["scene"],"native_navigation_exhausted")
+        self.assertIn("Qwen movement disabled",meta["review"]["reason"])
+
     def test_production_navigation_leg_interrupted_by_battle_is_replanned(self):
         from core.firered import Field
         from core.jj_explore import Explorer as ActualExplorer
