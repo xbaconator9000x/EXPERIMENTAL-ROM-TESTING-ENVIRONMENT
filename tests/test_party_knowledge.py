@@ -200,6 +200,36 @@ class PartyKnowledgeTests(unittest.TestCase):
         self.assertEqual(retain_verified_outcomes(meta),0)
         self.assertEqual(len(meta["party_knowledge"]["verified_outcomes"]),2)
 
+    def test_actual_battle_controller_uses_diverse_capture_policy(self):
+        from core.jj_battle import BattleAdapter
+        from core.jj_menus import intent_from_battle
+        own={"species":7,"hp":24,"max_hp":30,"types":["water"],
+             "moves":[33,55,0,0],"pp":[20,10,0,0],"status":0,
+             "stats":[25]*5,"stages":[6]*8,"level":10}
+        foe={"species":43,"hp":5,"max_hp":30,"types":["grass","poison"],
+             "status":0,"stats":[25]*5,"stages":[6]*8,"level":7}
+        s={"stage":"battle_command","cursor":0,"callback":0x08030611,
+           "wild":True,"own":own,"enemy":foe,
+           "party":[mon(0,7),mon(1,19),mon(2,25)],
+           "bag":{"balls":[{"id":4,"count":5}],"items":[]},"disabled":0}
+        adapter=BattleAdapter("unused","bad","classic",Catalog)
+        proof={"battle_proof":[0x08030611]}
+        proposal,_=adapter.action(s,proof)
+        self.assertEqual(proposal["actions"],[{"button":"RIGHT","frames":5}])
+        self.assertEqual(proposal["objective"],"Open bag to catch a new wild Pokémon")
+        # The bag intent must match the policy's actual verified target.
+        already_open={**s,"cursor":1}
+        a,_=adapter.action(already_open,proof)
+        intent=intent_from_battle(already_open,a,Catalog)
+        self.assertEqual(intent["purpose"],"catch")
+        self.assertEqual(intent["item"],4)
+        scarce={**s,"bag":{"balls":[{"id":4,"count":2}],"items":[]}}
+        self.assertEqual(adapter.action(scarce,proof)[0]["actions"][0]["button"],"A")
+        duplicate={**s,"enemy":{**foe,"species":19,"types":["normal"]}}
+        self.assertEqual(adapter.action(duplicate,proof)[0]["actions"][0]["button"],"A")
+        trainer={**s,"wild":False}
+        self.assertEqual(adapter.action(trainer,proof)[0]["actions"][0]["button"],"A")
+
     def test_verified_defensive_switch_matches_native_party_intent(self):
         from core.jj_battle import BattleAdapter
         from core.jj_menus import intent_from_battle
