@@ -69,6 +69,27 @@ class Tests(unittest.TestCase):
         self.assertEqual(q["phase"],"explore_and_advance_story")
         quest_state(m,None,[{"hp":1,"max_hp":10}])
         self.assertEqual(q["phase"],"restore_party_health")
+    def test_quest_notebook_separates_model_hypotheses_from_witnessed_progress(self):
+        meta={}
+        q=quest_state(meta,None,None,{"fact":"I think the rocket ship sank"},"Find the ship")
+        self.assertEqual(q["fact_source"],"model_hypothesis_not_a_verified_story_flag")
+        self.assertEqual(q["task_source"],"planner_proposal")
+        self.assertEqual(q["milestones"],[])
+        meta["party_knowledge"]={"verified_outcomes":[
+            {"kind":"wild_capture","decision":12},
+            {"kind":"battle_win","decision":15},
+            {"kind":"healing","decision":21},
+            {"kind":"fake_ending","decision":22},
+        ]}
+        meta["world_model"]={"skill_outcomes":[{"task":"exit","result":"native_verified"}]}
+        q=quest_state(meta,None,None)
+        self.assertIn("capture_observed",q["milestones"])
+        self.assertIn("battle_win_observed",q["milestones"])
+        self.assertIn("native_exit_observed",q["milestones"])
+        self.assertNotIn("ending_verified",q["milestones"])
+        n=len(q["milestones"])
+        self.assertEqual(len(quest_state(meta,None,None)["milestones"]),n)
+
     def test_replay_classifies_failure(self):
         class Live:
             def step(self,*a):raise LiveError("transport")
