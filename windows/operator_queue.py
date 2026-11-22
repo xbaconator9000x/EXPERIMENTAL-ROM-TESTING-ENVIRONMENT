@@ -32,6 +32,7 @@ class ControlPoller:
         self.test_stop=threading.Event()
         self.last_feedback=time.monotonic()
         self.poll_failures=0
+        self.announced=False
 
     def save_cursor(self):
         tmp=self.cursor_file.with_suffix(".tmp")
@@ -97,6 +98,16 @@ class ControlPoller:
         self.test_thread.start()
         self.ack(id,"ACCEPTED","test")
 
+    def announce(self):
+        if self.announced:return
+        body={"version":1,"rom_sha256":self.sha,
+              "capabilities":["pause","resume","status","snapshot","restore",
+                              "input","soft_reset","hard_reset","test"],
+              "checkpoint_bytes":"local_only","engine":"advanced"}
+        self.remote.request("/issues/"+str(self.issue)+"/comments",
+                            {"body":"ROM-CONTROL-READY v1\n"+json.dumps(body,separators=(",",":"))})
+        self.announced=True
+
     def poll_once(self):
         self.remote.verify() # includes mandatory private repository identity
         details=self.remote.request("/issues/"+str(self.issue))
@@ -113,7 +124,9 @@ class ControlPoller:
         if not self.cursor_file.exists():
             self.seen=max((x["id"] for x in rows if type(x.get("id")) is int),default=0)
             self.save_cursor()
+            self.announce()
             return
+        self.announce()
         for comment in rows:
             id=comment.get("id")
             if type(id) is not int or id<=self.seen:continue
