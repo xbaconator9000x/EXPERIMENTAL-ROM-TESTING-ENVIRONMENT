@@ -182,7 +182,7 @@ def _audit_rows(meta,source=None):
 def _stuck(rows,baseline):
     """Only *native coordinate* observations can prove non-progress."""
     last=_field(baseline.get("last_native_field"))
-    failed=0;measured=0;navigation=0
+    failed=0;measured=0;navigation=0;stalled_seconds=0.0;timed_stalls=0
     last_decision=baseline.get("decisions",0)
     for row in rows:
         if not isinstance(row,dict):continue
@@ -198,11 +198,17 @@ def _stuck(rows,baseline):
             navigation+=1
             if field is not None and last is not None:
                 measured+=1
-                if field==last:failed+=1
+                if field==last:
+                    failed+=1
+                    elapsed=row.get("elapsed_seconds")
+                    if (type(elapsed) in (int,float)
+                            and 0<=elapsed<=3600):
+                        stalled_seconds+=elapsed;timed_stalls+=1
         if field is not None:last=field
     return {"verified_comparisons":measured,"verified_no_progress":failed,
             "navigation_attempts":navigation,
-            "stuck_ratio":round(failed/measured,4) if measured else None}
+            "stuck_ratio":round(failed/measured,4) if measured else None,
+            "verified_stall_seconds":round(stalled_seconds,3) if timed_stalls else None}
 
 
 def evaluate(scenario,baseline,final,identity,*,status="BUDGET_REACHED",audit=None):
@@ -245,6 +251,11 @@ def evaluate(scenario,baseline,final,identity,*,status="BUDGET_REACHED",audit=No
     rows,limited=_audit_rows(final,audit)
     nav=_stuck(rows,baseline)
     metrics.update(nav)
+    calls=metrics["model_calls"]
+    native=metrics["native_decisions"]
+    metrics["native_decisions_per_model_call"]=(
+        round(native/calls,3) if type(calls) in (int,float) and calls>0
+        and type(native) in (int,float) else None)
     metrics["audit_limited"]=limited
     # Successful milestones and novel maps dominate the score; traversing
     # the same old corridor repeatedly cannot farm unlimited points.
