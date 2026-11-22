@@ -11,6 +11,24 @@ class TestExplorer(unittest.TestCase):
         npc={"kind":"npc","x":3,"y":1,"id":1,"gfx":12}
         warp={"kind":"warp","x":4,"y":4,"id":0,"destination":[3,4]}
         return f,npc,warp
+    def test_native_event_probe_distinguishes_unverified_rejected_and_readable(self):
+        from unittest.mock import patch
+        f,npc,warp=self.setup()
+        candidate=(f,0x08001235,{(3,1)})
+        adapter=MockAdapter()
+        adapter.live=object()
+        adapter.size=16*1024*1024
+        ex=Explorer(adapter);meta={}
+        self.assertIsNone(ex.inspect(None,meta))
+        self.assertEqual(meta["native_event_probe"]["status"],"FIELD_NOT_VERIFIED")
+        with patch("core.jj_explore.event_targets",return_value=([npc,warp],"RIGHT")):
+            result=ex.inspect(candidate,meta)
+        self.assertEqual(result[0],[npc,warp])
+        self.assertEqual(meta["native_event_probe"],{"status":"EVENTS_READ","counts":{"npc":1,"warp":1,"connection":0}})
+        with patch("core.jj_explore.event_targets",side_effect=ValueError("invalid event pointer")):
+            self.assertIsNone(ex.inspect(candidate,meta))
+        self.assertEqual(meta["native_event_probe"]["status"],"EVENTS_REJECTED")
+
     def test_event_approach_and_interaction(self):
         f,npc,warp=self.setup();c=(f,1,{(3,1)})
         ex=Explorer(MockAdapter());m={};info=([npc,warp],"RIGHT")
