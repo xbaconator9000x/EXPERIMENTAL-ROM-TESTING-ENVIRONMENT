@@ -71,6 +71,8 @@ class WorldModelTests(unittest.TestCase):
         # In mixed exploration mode, revisit a story NPC after the known
         # exits have already been explored; do not keep recrossing the same map.
         meta["event_attempts"]=[]
+        world["maps"]["5:6"]={"map":[5,6]}
+        world["edges"].append({"from":"1:2","to":"5:6"})
         self.assertTrue(explorer.request(candidate(),meta,info,"explore"))
         self.assertEqual(meta["event_goal"]["event"]["kind"],"npc")
 
