@@ -181,9 +181,14 @@ class Dashboard:
                 operator=json.loads(op_file.read_text(encoding="utf-8"))
             op_event=operator.get("event",{}) if operator else {}
             end=terminal(self.selected)
+            recovery=meta.get("review_recovery",{})
+            recovery_status=recovery.get("status") if isinstance(recovery,dict) else None
             if operator and operator.get("paused"):
                 self.status("OPERATOR PAUSED","#1d4ed8")
-            elif operator and op_event.get("action")=="needs_review" and not end:
+            elif recovery_status=="RUNNING":
+                self.status("AUTOMATIC RECOVERY: "+str(recovery.get("phase","A")).upper(),"#92400e")
+            elif (operator and op_event.get("action")=="needs_review" and not end
+                  and recovery_status not in ("PROGRESS","INTERRUPTED")):
                 self.status("OPERATOR RECOVERY WAIT","#92400e")
             elif end:self.status(end.replace("_"," "),"#92400e" if end!="EMULATOR_ERROR" else "#991b1b")
             elif meta.get("model_error"):self.status("MODEL RETRY: "+str(meta["model_error"]),"#92400e")
