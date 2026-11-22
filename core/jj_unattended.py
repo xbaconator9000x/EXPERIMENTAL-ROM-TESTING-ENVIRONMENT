@@ -18,6 +18,33 @@ def cycle(history,screen):
         if screen in screens and None not in screens and len(screens)<=2:return sorted(screens)
     return []
 
+def oscillation(history,screen):
+    """Evidence of a repeated two-screen reversal, independent of AI labels.
+
+    Return the controller direction which has repeatedly led *back* to the
+    previous screenshot. Only completed, changed, cardinal single-step
+    transitions count; animation flicker and self-loops are not sufficient.
+    This evidence lives in the checkpoint's ordinary bounded history.
+    """
+    rows=history[-12:]
+    if len(rows)<8 or rows[-1].get("after")!=screen:return None
+    screens={row.get("after") for row in rows}
+    if len(screens)!=2 or None in screens:return None
+    if any(row.get("before") not in screens or row.get("before")==row.get("after")
+           or len(row.get("actions",[]))!=1 or
+           row["actions"][0].get("button") not in DIR
+           for row in rows):
+        return None
+    # A genuine oscillation alternates a->b, b->a with no third position.
+    if any(a.get("after")!=b.get("before") for a,b in zip(rows,rows[1:])):
+        return None
+    escaping=[row["actions"][0]["button"] for row in rows
+              if row.get("before")==screen]
+    if len(escaping)<3 or len(set(escaping))!=1:return None
+    return {"screens":sorted(screens),"avoid_button":escaping[0],
+            "repetitions":len(escaping)}
+
+
 def field_hint(history):
     if not history:return False
     row=history[-1]
@@ -32,7 +59,17 @@ def recovery(meta,screen,rgb,candidate=None,verified=False):
     """
     history=meta.get("history",[])
     loop=cycle(history,screen)
-    if not loop or ordinary_dialogue(rgb) or not (verified or field_hint(history)):return None
+    if not loop or ordinary_dialogue(rgb):return None
+    proof=meta.get("field_proof",{})
+    has_native_motion=(isinstance(proof,dict) and isinstance(proof.get("callback"),int)
+                       and len(set(proof.get("directions",[])))>=1)
+    # The visual model can retain the last dialogue scene label long after
+    # dialogue disappears. One independently verified native movement witness
+    # plus a repeated two-screen directional oscillation is stronger evidence
+    # for bounded field recovery than that stale AI label. Never use this to
+    # confirm a dialogue, menu, battle, or unknown uncorroborated screen.
+    if not (verified or field_hint(history)
+            or (has_native_motion and oscillation(history,screen))):return None
     record=meta.setdefault("recovery",{"attempts":[],"screens":[]})
     if not set(record["screens"])&set(loop):
         record.update(attempts=[],screens=loop)
