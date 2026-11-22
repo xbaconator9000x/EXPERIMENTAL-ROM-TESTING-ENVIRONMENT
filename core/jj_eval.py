@@ -302,6 +302,13 @@ def run_isolated(scenario,checkpoint,output_root,runner,rom,rom_sha,goal,model,
     result=evaluate(scenario,baseline,final,identity,status=status,
                     audit=scratch/"actions.jsonl")
     result["scratch_directory"]=str(scratch)
+    result["episode_identity"]={
+        "original_checkpoint_sha256":original_hash,
+        "isolated_checkpoint_sha256":_digest_file(scratch/"progress.bin"),
+        "engine_sha256":engine_hash(),
+        "model":identity["model"],
+        "goal_sha256":hashlib.sha256(goal.encode("utf-8")).hexdigest(),
+        "decision_budget":budget}
     result["original_unchanged"]=_digest_file(cp)==original_hash
     if not result["original_unchanged"]:
         result["result"]="FAIL";result["reason"]="original_checkpoint_modified"
