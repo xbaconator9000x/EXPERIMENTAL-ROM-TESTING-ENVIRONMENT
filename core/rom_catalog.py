@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 
 JJ="06d9c87234400f45f1fc3a356881f0ad8bd9b977bc5cbed450e5c7eedd01b632"
+JJ_V1033="bb4fd81b32f5e2a69254fc18fbc47e7c7bcbfb35baeace45be2b5dda7876803b"
 SPECIES_NAMES=0x245EE0
 MOVE_NAMES=0x247094
 MOVE_DATA=0x250C04
@@ -104,7 +105,7 @@ class Catalog:
         return out
 
 def try_catalog(path,sha,goal):
-    if sha!=JJ or "classic" not in goal.lower() or "modern" in goal.lower():return None
+    if sha not in (JJ,JJ_V1033) or "classic" not in goal.lower() or "modern" in goal.lower():return None
     try:
         p=Path(path)
         if not 0<p.stat().st_size<=32*1024*1024:return None
