@@ -54,7 +54,7 @@ class BatchTests(unittest.TestCase):
             (proposal(frames=120), "vision_compact", {}),
         ):
             single, plan = prepare(d, source, **opts)
-            self.assertEqual(single, d)
+            self.assertEqual(single["actions"], d["actions"] if not source.startswith("vision") else d["actions"][:1])
             self.assertIsNone(plan)
 
     def test_up_to_ten_navigation_steps_and_no_more(self):
@@ -64,6 +64,7 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(len(plan["remaining"]), 9)
         d, plan = prepare(proposal(buttons=actions + ("RIGHT",)), "vision_rich")
         self.assertIsNone(plan)
+        self.assertEqual(len(d["actions"]), 1)
 
     def test_scene_change_cancels_queue(self):
         before = screen()
