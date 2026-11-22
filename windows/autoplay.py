@@ -12,6 +12,8 @@ from core.autoplay import OllamaVision, play, png, load_progress
 from core.guidance import newest_guide, claim_guide
 from windows.host import ROOT, LIBRARY, REPO, fingerprint
 from windows.queue_host import Remote
+from windows.operator_queue import ControlPoller
+from core.upstream_port import UPSTREAM_COMMIT
 
 TITLE="[ROM-PLAY v1]"
 UPSTREAM_TITLE="[ROM-PLAY upstream v2]"
@@ -82,7 +84,7 @@ def main():
                     if done.is_file():
                         try:finished=json.loads(done.read_text(encoding="utf-8"))
                         except (ValueError,OSError):continue
-                        if upstream or finished.get("status") not in ("NEEDS_REVIEW","EMULATOR_ERROR"):continue
+                        if finished.get("status") not in ("NEEDS_REVIEW","EMULATOR_ERROR","MODEL_UNAVAILABLE_OR_INVALID","UPSTREAM_SKILL_ERROR"):continue
                     try:job=goal(issue.get("body"),issue["title"])
                     except ValueError:continue
                     rom=LIBRARY/(job["sha256"]+".gba")
@@ -126,7 +128,10 @@ def main():
                         marker=folder/"unattended-v1-resume"
                         previous_reason=prior[0].get("review",{}) or {}
                         upgrade_retry=(finished.get("status")=="NEEDS_REVIEW" and "repeated screen cycle" in previous_reason.get("reason","") and not marker.exists())
-                        if not upgrade_retry and not guidance(prior[0],hashlib.sha256(prior[2]).hexdigest()):continue
+                        operator_marker=folder/"operator-remote-v1-upgrade"
+                        new_upgrade=(not operator_marker.exists())
+                        if not upgrade_retry and not new_upgrade and not guidance(prior[0],hashlib.sha256(prior[2]).hexdigest()):continue
+                        if new_upgrade:operator_marker.write_text("remote recovery available\n",encoding="ascii")
                         if upgrade_retry:marker.write_text("bounded recovery enabled\n",encoding="ascii")
                         done.unlink()
                     def checked_guide(meta,screen):
@@ -137,15 +142,18 @@ def main():
                         try:post(remote,number,status,meta,rgb)
                         except (OSError,ValueError,KeyError):
                             print("Private progress report failed; local checkpoint retained.",flush=True)
-                    if upstream:
-                        from core.upstream_campaign import campaign
-                        from core.upstream_port import PortError
-                        try:
-                            status,meta,rgb=campaign(RUNNER,rom,job["sha256"],a.upstream_checkout,folder,a.model,job["goal"],100000,should_stop=stop,report=report)
-                        except PortError as exc:
-                            print("Upstream profile rejected: "+str(exc),flush=True);continue
-                    else:
-                        status,meta,rgb=play(RUNNER,rom,job["sha256"],job["goal"],folder,model,should_stop=stop,report=report,guidance=checked_guide)
+                    identity={"rom":job["sha256"],"runner":fingerprint(RUNNER),"goal":job["goal"],"model":a.model}
+                    if upstream:identity["upstream"]=UPSTREAM_COMMIT
+                    with ControlPoller(remote,number,job["sha256"],folder,identity,RUNNER,rom) as control:
+                        if upstream:
+                            from core.upstream_campaign import campaign
+                            from core.upstream_port import PortError
+                            try:
+                                status,meta,rgb=campaign(RUNNER,rom,job["sha256"],a.upstream_checkout,folder,a.model,job["goal"],100000,should_stop=stop,report=report,control=control)
+                            except PortError as exc:
+                                print("Upstream profile rejected: "+str(exc),flush=True);continue
+                        else:
+                            status,meta,rgb=play(RUNNER,rom,job["sha256"],job["goal"],folder,model,should_stop=stop,report=report,guidance=checked_guide,control=control)
                     if status!="STOPPED":
                         if status not in ("NEEDS_REVIEW","EMULATOR_ERROR","MODEL_UNAVAILABLE_OR_INVALID"):report(status,meta,rgb)
                         if status!="MODEL_UNAVAILABLE_OR_INVALID":
