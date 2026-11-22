@@ -5,6 +5,28 @@ from core.live import LiveError
 def history():
     return [{"before":"a" if i%2==0 else "b","after":"b" if i%2==0 else "a","scene":"hospital_room","actions":[{"button":"UP" if i%2==0 else "DOWN","frames":16}]} for i in range(12)]
 class Tests(unittest.TestCase):
+    def test_old_operator_door_false_cycle_reopens_only_exact_checkpoint(self):
+        from core.jj_unattended import legacy_operator_door_cycle
+        m={"review":{"scene":"native_script_settle",
+                     "reason":"repeated screen cycle; alternative action required"},
+           "operator_last_action":"input",
+           "native_diagnostics":{"field_reason":"SCRIPT_CONTROL_LOCK"},
+           "review_recovery":{"screen":"lcd","status":"RUNNING"},
+           "history":[{"source":"review_recovery","actions":[{"button":"B","frames":4}]},
+                      {"source":"native_script_settle","actions":[{"button":"WAIT","frames":24}]}]}
+        self.assertTrue(legacy_operator_door_cycle(m))
+        m["recovery_resume"]={"kind":"native_script_locked","phase":"pending"}
+        self.assertFalse(legacy_operator_door_cycle(m))
+        m.pop("recovery_resume")
+        m["review_recovery"]["status"]="EXHAUSTED"
+        self.assertFalse(legacy_operator_door_cycle(m))
+        m["review_recovery"]["status"]="RUNNING"
+        m["review"]["reason"]="actual warp crash"
+        self.assertFalse(legacy_operator_door_cycle(m))
+        m["review"]["reason"]="repeated screen cycle; alternative action required"
+        m["operator_last_action"]="status"
+        self.assertFalse(legacy_operator_door_cycle(m))
+
     def test_recovery_ladder_and_script_waits_cannot_fabricate_field_cycle(self):
         from core.jj_unattended import persistent_native_field_cycle
         from core.firered import Field
