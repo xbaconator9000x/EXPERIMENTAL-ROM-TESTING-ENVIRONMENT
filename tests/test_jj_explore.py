@@ -69,6 +69,21 @@ class TestExplorer(unittest.TestCase):
         self.assertEqual(diagnostics(meta)["maps"],0)
         self.assertNotIn("event_goal",meta)
 
+    def test_story_npc_path_never_uses_filtered_out_warp_as_a_shortcut(self):
+        # The NPC task filters the candidate list to NPCs, but the nearby
+        # door remains a real tile hazard. Walking straight RIGHT would
+        # trigger the warp instead of reaching the NPC's interaction tile.
+        f=Field((1,2),(1,2),5,5,(0,)*25)
+        c=(f,0x08001235,{(3,2)})
+        npc={"kind":"npc","x":3,"y":2,"id":1,"gfx":12}
+        warp={"kind":"warp","x":2,"y":2,"id":0,"destination":[3,4]}
+        ex=Explorer(MockAdapter());meta={"native_party_count":0}
+        info=([npc,warp],"RIGHT")
+        self.assertTrue(ex.request(c,meta,info,"interact"))
+        result,cmd=ex.next(c,meta,info)
+        self.assertIn(result["actions"][0]["button"],("UP","DOWN"))
+        self.assertNotEqual(tuple(meta["event_goal"]["target"]),(2,2))
+
     def test_battle_interruption_replans_without_blacklisting_story_target(self):
         f,npc,warp=self.setup()
         c=(f,0x08001235,{(3,1)})
