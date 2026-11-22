@@ -81,3 +81,15 @@ aggregate counts of newly set/cleared flags and changed variables, plus the
 action source and decision number. This is a candidate event-data delta,
 not a completed-quest or item-acquisition claim. Unknown layouts and
 script-locked after-states are skipped rather than guessed.
+
+## Read-only native text-printer probe (candidate layout)
+Derived from pret/pokefirered include/text.h, src/text_printer.c,
+src/text.c and src/field_message_box.c, corroborated against the pinned
+FireRed 1.0 symbol map. For SHA-admitted Jessie & James only, a candidate
+sTextPrinters[0] and field message-box state can advance verified WAIT/CLEAR/
+SCROLL_START text with a single GBA A press or wait while text is printing.
+It does not call Qwen, assume a choice menu, write RAM, or read text content
+into diagnostics. It rejects unknown addresses/states and floating choices;
+identical ready-page repeats are guarded. Candidate symbol addresses are
+NOT guaranteed to survive ROM-hack modifications. Real Windows mGBA
+acceptance is required before this facility is considered validated.

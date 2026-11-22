@@ -28,6 +28,7 @@ from core.gen3_profiles import open_profile, VanillaField, VanillaBattle
 from core.native_acceptance import Acceptance
 from core.jj_explore import Explorer, native_event_settle
 from core.jj_compat import safe_map_audit
+from core.jj_text import decide as native_text_decide
 from core.jj_event_data import safe_event_data, read_event_data, transition_counts
 from core.jj_world_model import observe as world_observe, task as world_task, summary as world_summary, complete as world_complete
 from core.jj_tile_memory import refresh_on_verified_arrival, confirm_native_position
@@ -462,9 +463,21 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                         pass
                 if fast:decision,dialogue_page=fast;source="fast_dialogue"
                 else:
-                    event=explorer.next(field_before,meta,events)
-                    if event:decision,event_command=event;source="native_explore"
-                    else:meta.pop("event_goal",None)
+                    # The ROM's own printer can recognize a button-wait state
+                    # without pixel-theme assumptions or a model request.
+                    # Read-only, exact-ROM gated; unknown scenes fail closed.
+                    if (sha in JJ_RELEASES and isinstance(adapter,Adapter)
+                            and adapter.admitted and getattr(adapter,"size",0)>0
+                            and menu_before is None):
+                        decision=native_text_decide(
+                            live,rgb,meta,adapter.size,
+                            script_locked=(adapter.reason=="SCRIPT_CONTROL_LOCK"),
+                            recognized=(ordinary_dialogue(rgb) is not None))
+                        if decision:source="native_text"
+                    if decision is None:
+                        event=explorer.next(field_before,meta,events)
+                        if event:decision,event_command=event;source="native_explore"
+                        else:meta.pop("event_goal",None)
                 if (decision is None and sha in JJ_RELEASES and field_verified and events):
                     # A missing party snapshot must not force expensive vision
                     # wandering when the player has a verified field and
@@ -735,7 +748,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     decision,batch_pending=prepare_action_batch(
                         decision,source,field_witness=nav_allowed,
                         battle=(battle_before is not None),menu=(menu_before is not None))
-            actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route","native_explore","native_scout","native_menu","native_battle_wait","native_script_settle","native_strategic_recheck","native_guarded_visual","field_recovery","batch_navigation") else choose(decision,history,screen)
+            actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route","native_explore","native_scout","native_menu","native_battle_wait","native_script_settle","native_text","native_strategic_recheck","native_guarded_visual","field_recovery","batch_navigation") else choose(decision,history,screen)
             # A tested, direction-specific loop observation must override a
             # fresh model suggestion that simply retraces the same route.
             # Bounded recovery is tried first, above; when exhausted, park
@@ -770,7 +783,8 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if batch_pending:
                 meta["action_batch"]=batch_pending
             # Segment the native 200k-frame guard without losing game state.
-            settle=(150 if source=="fast_dialogue" else
+            settle=(48 if source=="native_text" else
+                    150 if source=="fast_dialogue" else
                     native_event_settle(event_command,events) if source=="native_explore" else
                     16 if source=="native_route" else
                     settle_frames(decision,source,visible_dialogue=ordinary_dialogue(rgb) is not None))
