@@ -75,3 +75,9 @@ because they live outside this save region. Aggregate flag counts and nonzero
 variable counts only are exposed privately; **no raw save data or IDs** enter
 logs, GitHub issues, or PRs. Changes are never treated as quest completion
 without a separately observed event and correct modified-ROM layout evidence.
+When a native-verified action starts and ends on the same verified map,
+the runner compares two private in-memory table snapshots and records only
+aggregate counts of newly set/cleared flags and changed variables, plus the
+action source and decision number. This is a candidate event-data delta,
+not a completed-quest or item-acquisition claim. Unknown layouts and
+script-locked after-states are skipped rather than guessed.

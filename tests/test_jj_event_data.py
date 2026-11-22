@@ -50,6 +50,12 @@ class EventDataTests(unittest.TestCase):
             return bytes(8) if n==8 else b"\x00"
         self.live.read=bad_read
         self.assertEqual(safe_event_data(self.live,self.field)["reason"],"FIELD_IDENTITY_MISMATCH")
+    def test_different_maps_are_not_attributed_as_same_event(self):
+        a=read_event_data(self.live,self.field)
+        other=EventData((43,2),a.flags,a.variables)
+        self.assertEqual(transition_counts(a,other)["status"],
+                         "DIFFERENT_MAPS_NO_COMPARISON")
+
     def test_delta_counts_do_not_claim_story_event(self):
         a=read_event_data(self.live,self.field)
         self.live.memory[0xEE0+0x202//8]|=1<<(0x202&7)

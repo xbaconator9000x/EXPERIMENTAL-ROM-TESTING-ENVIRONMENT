@@ -365,6 +365,7 @@ def diagnostic(adapter,battles,menus,field,meta):
             "event_probe":meta.get("native_event_probe"),
             "rom_hack_map_compat":meta.get("rom_hack_map_compat"),
             "rom_hack_event_data":meta.get("rom_hack_event_data"),
+            "last_observed_event_data_delta":meta.get("last_observed_event_data_delta"),
             "event_witnesses":meta.get("native_event_witnesses",[])[-3:],
             "native_retry":{k:v for k,v in meta.get("native_revisit",{}).items()
                  if k in ("epoch","approaches","sweeps","status")},

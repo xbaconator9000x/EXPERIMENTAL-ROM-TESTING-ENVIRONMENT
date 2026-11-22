@@ -28,7 +28,7 @@ from core.gen3_profiles import open_profile, VanillaField, VanillaBattle
 from core.native_acceptance import Acceptance
 from core.jj_explore import Explorer, native_event_settle
 from core.jj_compat import safe_map_audit
-from core.jj_event_data import safe_event_data
+from core.jj_event_data import safe_event_data, read_event_data, transition_counts
 from core.jj_world_model import observe as world_observe, task as world_task, summary as world_summary, complete as world_complete
 from core.jj_tile_memory import refresh_on_verified_arrival, confirm_native_position
 from core.jj_menus import MenuDriver,intent_from_battle
@@ -775,6 +775,13 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     16 if source=="native_route" else
                     settle_frames(decision,source,visible_dialogue=ordinary_dialogue(rgb) is not None))
             cost=sum(a["frames"]+settle for a in actions)
+            # Immutable read-only snapshot before the native action. No save
+            # bytes or flag IDs enter the public repository or private issue.
+            event_data_before=None
+            if (sha in JJ_RELEASES and isinstance(adapter,Adapter)
+                    and adapter.admitted and field_verified and field_before):
+                try:event_data_before=read_event_data(live,field_before[0])
+                except (ValueError,LiveError,OSError,IndexError,TypeError):pass
             witness_before=acceptance.witness(live,field_before,battle_before)
             if session_frames+cost>180000:
                 state=live.save_state();live.close();live=open_live(state);session_frames=0
@@ -861,6 +868,18 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 if isinstance(prior_field,dict):
                     refresh_on_verified_arrival(meta,prior_field.get("map"),
                         list(field_after[0].map_id),verified=True)
+            if (event_data_before is not None and after_verified
+                    and field_after and isinstance(adapter,Adapter)):
+                try:
+                    delta=transition_counts(
+                        event_data_before,read_event_data(live,field_after[0]))
+                    if (delta.get("status")=="STOCK_LAYOUT_CANDIDATE_DELTA"
+                            and any(delta[k] for k in (
+                                "flags_raised","flags_cleared","variables_changed"))):
+                        meta["last_observed_event_data_delta"]={
+                            **delta,"decision":meta["decisions"]+1,"source":source}
+                except (ValueError,LiveError,OSError,IndexError,TypeError):
+                    pass
             record_field(meta,field_after,after_verified)
             if sha in JJ_RELEASES and after_verified:
                 world_observe(meta,field_after,None,verified=True,
