@@ -5,6 +5,32 @@ from core.live import LiveError
 def history():
     return [{"before":"a" if i%2==0 else "b","after":"b" if i%2==0 else "a","scene":"hospital_room","actions":[{"button":"UP" if i%2==0 else "DOWN","frames":16}]} for i in range(12)]
 class Tests(unittest.TestCase):
+    def test_recovery_ladder_and_script_waits_cannot_fabricate_field_cycle(self):
+        from core.jj_unattended import persistent_native_field_cycle
+        from core.firered import Field
+        field=(Field((43,1),(9,6),12,12,(0,)*144),0x08001235,set())
+        rows=[{"source":"review_recovery","scene":"review_recovery",
+               "after":"unchanged","actions":[{"button":"A","frames":4}]}]*23
+        rows.append({"source":"native_script_settle","scene":"native_script_settle",
+                     "after":"unchanged","actions":[{"button":"WAIT","frames":24}]})
+        self.assertFalse(persistent_native_field_cycle(rows,field))
+        self.assertFalse(persistent_native_field_cycle(rows*3,field))
+        self.assertFalse(persistent_native_field_cycle(rows,None))
+        nav=[{"source":"native_explore","after":"same",
+              "field_after":{"map":[43,1],"pos":[9,6]},
+              "actions":[{"button":"DOWN","frames":16}]} for _ in range(24)]
+        self.assertTrue(persistent_native_field_cycle(nav,field))
+        nav[-1]={"source":"native_text","after":"same",
+                 "actions":[{"button":"WAIT","frames":24}]}
+        self.assertFalse(persistent_native_field_cycle(nav,field))
+        nav[-1]={"source":"native_explore","after":"same",
+                 "actions":[{"button":"DOWN","frames":16}]}
+        self.assertFalse(persistent_native_field_cycle(nav,field))
+        nav[-1]={"source":"native_explore","after":"same",
+                 "field_after":{"map":[43,2],"pos":[9,6]},
+                 "actions":[{"button":"DOWN","frames":16}]}
+        self.assertFalse(persistent_native_field_cycle(nav,field))
+
     def test_legacy_post_script_checkpoint_migrates_only_with_real_witnesses(self):
         from core.jj_unattended import legacy_script_resume_candidate
         legacy={"review":{"scene":"native_navigation_exhausted"},
