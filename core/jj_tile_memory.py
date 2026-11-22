@@ -117,6 +117,21 @@ def record(meta,before,after,command,*,verified_before,verified_after):
     return "blocked" if n>=BLOCK_AFTER else "retry"
 
 
+def refresh_on_verified_arrival(meta,previous_map,new_map,*,verified):
+    """Reset provisional obstacle assumptions on a genuinely different map.
+
+    NPCs, event flags and scripted blockers can move or change between visits.
+    A previous collision is not permanent ROM tile metadata. A same-map
+    screenshot change or unverified fade cannot clear observations.
+    """
+    before,after=map_key(previous_map),map_key(new_map)
+    if not verified or before is None or after is None or before==after:
+        return False
+    book=_book(meta)
+    if book is None:return False
+    return book["maps"].pop(after,None) is not None
+
+
 def diagnostics(meta):
     book=_book(meta)
     if not book:return {"maps":0,"blocked_tiles":0,"probing_tiles":0}
