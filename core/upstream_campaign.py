@@ -118,6 +118,16 @@ def campaign(runner,rom,sha,checkout,folder,model,goal,max_decisions,should_stop
                 meta["failed_skill"]={"name":name,"args":args,"error":str(exc)[:200]}
                 save_progress(path,identity,meta,state,rgb)
                 report("EMULATOR_ERROR",meta,rgb);return "EMULATOR_ERROR",meta,rgb
+            except Exception as exc:
+                # An unexpected upstream skill failure may have partially
+                # advanced the live emulator. Never checkpoint that unknown
+                # state or claim it was a ROM crash. The last saved native
+                # state remains the only resumable witness.
+                meta["failed_skill"]={"name":name,"args":args,
+                    "error_type":type(exc).__name__,"category":"UPSTREAM_SKILL_ERROR"}
+                save_progress(path,identity,meta,state,rgb)
+                report("UPSTREAM_SKILL_ERROR",meta,rgb)
+                return "UPSTREAM_SKILL_ERROR",meta,rgb
             frames=session.transport.frames
             entry={"decision":meta["decisions"]+1,"before":digest(rgb),"after":digest(after),
                    "skill":name,"args":args,"result":result,"frames":frames,"source":"upstream_skill",
