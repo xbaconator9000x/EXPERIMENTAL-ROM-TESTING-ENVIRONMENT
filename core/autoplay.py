@@ -400,7 +400,10 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             meta.setdefault("review_recovery",{})["status"]="FAILED"
             save_progress(path,identity,meta,live.save_state(),rgb)
             return False
-        rgb=new_rgb
+        # An operator can replace the native state during a 10-second
+        # interval. Never overwrite that newer authoritative LCD witness with
+        # the interrupted recovery's stale local image.
+        if status!="INTERRUPTED":rgb=new_rgb
         if status in ("PROGRESS","INTERRUPTED"):
             if status=="PROGRESS":
                 meta.pop("review",None)
@@ -1082,6 +1085,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 if sha in JJ_RELEASES and recovery(copy.deepcopy(meta),digest(rgb),rgb,field_after,adapter.verified_field(field_after,meta)) is not None:
                     continue
                 meta["review"]={"scene":decision["scene"],"objective":decision["objective"],"reason":"repeated screen cycle; alternative action required"}
+                if attempt_auto_review_recovery():continue
                 save_progress(path,identity,meta,state,rgb)
                 report("NEEDS_REVIEW",meta,rgb)
                 if control:
