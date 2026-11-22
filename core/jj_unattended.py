@@ -332,6 +332,10 @@ def diagnostic(adapter,battles,menus,field,meta):
             "catalog":battles.catalog is not None,"inventory":battles.field_inventory,
             "bag_candidate":menus.bag_ok,"party_candidate":menus.party_ok,
             "event_probe":meta.get("native_event_probe"),
+            "event_witnesses":meta.get("native_event_witnesses",[])[-3:],
+            "native_retry":{k:v for k,v in meta.get("native_revisit",{}).items()
+                 if k in ("epoch","approaches","sweeps","status")},
+            "strategic_referral":meta.get("field_strategic_referral"),
             "native_vision_budget":meta.get("native_vision_budget"),
             "native_scout":{k:{"moves":v.get("moves"),"visited":len(v.get("visited",[])),
                               "status":v.get("status")}

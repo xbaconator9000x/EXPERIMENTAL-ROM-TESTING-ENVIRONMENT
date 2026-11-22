@@ -466,21 +466,12 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     route=adapter.route_action(field_before,meta)
                     if route:decision,route_expected=route;source="native_route"
                     else:meta.pop("native_route",None)
-                # A parsed native map can be explored without calling Qwen
-                # after every event approach is exhausted.
-                if (decision is None and sha in JJ_RELEASES and field_verified
-                        and verified_party and
-                        meta.get("objective_state",{}).get("phase")=="explore_and_advance_story"):
-                    scout=explorer.scout(field_before,meta,events)
-                    if scout:decision,scout_command=scout;source="native_scout"
-                # Exhaust meaningful ROM-derived exit/coordinate/NPC choices
-                # in multiple substantial sweeps before a Qwen referral.
+                # Retrying real exits beats speculative floor surveying.
+                # A native trigger approach is only selected when A* can
+                # actually produce movement or a valid adjacent interaction.
                 if (decision is None and field_verified and events
                         and hasattr(explorer,"reconsider")):
-                    # Some synthetic/event-overlap routes are not actionable
-                    # even though an event exists. Try another native target
-                    # in the same tick, not Qwen after one null path.
-                    for _ in range(24):
+                    for _ in range(min(4,max(1,len(events[0])))):
                         if not explorer.reconsider(field_before,meta,events):
                             break
                         again=explorer.next(field_before,meta,events)
@@ -489,6 +480,13 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                             source="native_explore"
                             break
                         meta.pop("event_goal",None)
+                # Only after usable exits/coordinate triggers run out do we
+                # survey additional verified walkable floor tiles.
+                if (decision is None and sha in JJ_RELEASES and field_verified
+                        and verified_party and
+                        meta.get("objective_state",{}).get("phase")=="explore_and_advance_story"):
+                    scout=explorer.scout(field_before,meta,events)
+                    if scout:decision,scout_command=scout;source="native_scout"
             if (decision is None and sha in JJ_RELEASES and
                     adapter.reason=="SCRIPT_CONTROL_LOCK" and
                     battle_before is None and menu_before is None):

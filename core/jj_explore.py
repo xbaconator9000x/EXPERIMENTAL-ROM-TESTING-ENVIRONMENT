@@ -75,6 +75,24 @@ def event_targets(live,rom_size,field,map_header=MAP_HEADER,object_base=OBJECTS,
 def event_key(field,event):
     return ":".join(map(str,(*field.map_id,event["kind"],event["id"],event["x"],event["y"])))
 
+
+def reentry_neighbor(field,occupied,events,blocked=()):
+    """A safe one-tile step OFF an existing warp or coordinate trigger.
+
+    The next A* leg enters the trigger from the neighboring tile. A short
+    turn, standing on the tile, or pressing A cannot activate a walk-on
+    trigger; never substitute unverified visual movement.
+    """
+    hazards={(e["x"],e["y"]) for e in events
+             if isinstance(e,dict) and e.get("kind") in ("warp","coord")}
+    obstacles=set(occupied)|set(blocked)|hazards
+    for direction,(dx,dy) in DIR.items():
+        nxt=(field.pos[0]+dx,field.pos[1]+dy)
+        if nxt not in obstacles and field.passable(*nxt):
+            return direction,nxt
+    return None
+
+
 def options(field,occupied,events,attempted,blocked=(),avoid_warps=None):
     """Rank reachable untried events, staying off unrelated warp tiles."""
     candidates=[]
@@ -90,7 +108,7 @@ def options(field,occupied,events,attempted,blocked=(),avoid_warps=None):
         if e["kind"] in ("warp","connection","coord"):goals=[(p,e.get("direction"))]
         else:goals=[((p[0]-dx,p[1]-dy),d) for d,(dx,dy) in DIR.items()]
         for target,direction in goals:
-            if target==field.pos and target not in blocked:path=[]
+            if target==field.pos:path=[]
             else:
                 path=find_path(field.pos,target,lambda x,y:field.passable(x,y) and (x,y) not in occupied and (x,y) not in blocked and ((x,y) not in triggers or (e["kind"] in ("warp","coord") and (x,y)==target)),field.width,field.height)
                 if path is None:continue
@@ -155,7 +173,15 @@ class Explorer:
             meta["starter_event_retry"]=list(f.map_id)
             choices=options(f,occupied,events,[],blocked_tiles(meta,f.map_id),avoid_warps=all_events)
         if not choices:return False
-        choices=[c for c in choices if c[5] or c[4]["kind"]!="warp"]
+        # A normal exit can start while we already occupy its warp tile.
+        # Re-enter it from a safe adjacent tile instead of rejecting the
+        # only known exit and roaming the rest of the room.
+        choices=[c for c in choices if c[5] or
+                 (c[4]["kind"] in ("warp","coord")
+                  and c[2]==f.pos
+                  and reentry_neighbor(f,occupied,all_events,
+                                       blocked_tiles(meta,f.map_id)) is not None)
+                 or c[4]["kind"] not in ("warp","coord")]
         if not choices:return False
         # Select intent, then let the existing tested A* paths and per-step
         # witness checks do the movement. Avoid repeating visited routes while
@@ -166,7 +192,10 @@ class Explorer:
         chosen=rank_goal(meta,choices,party,current_map=f.map_id,task_name=task)
         if chosen is None:return False
         _,key,target,facing,event,path=chosen
-        meta["event_goal"]={"map":list(f.map_id),"key":key,"event":event,"target":list(target),"facing":facing,"remaining":min(48,len(path)+3)}
+        meta["event_goal"]={"map":list(f.map_id),"key":key,"event":event,
+                            "target":list(target),"facing":facing,
+                            "retry":bool(f.pos==target and event["kind"] in ("warp","coord")),
+                            "remaining":min(48,len(path)+6)}
         return True
     def reconsider(self,candidate,meta,info):
         """Systematically retry genuine ROM events after normal A* exploration.
@@ -199,7 +228,10 @@ class Explorer:
         # on the trigger is handled by a verified step off and then back.
         viable=[c for c in viable if c[4].get("kind") in
                 ("warp","connection","coord","npc","bg")
-                and counts.get(c[1],0)<NATIVE_RETRY_PER_TARGET]
+                and counts.get(c[1],0)<NATIVE_RETRY_PER_TARGET
+                and (bool(c[5]) or c[4]["kind"] not in ("warp","coord")
+                     or reentry_neighbor(field,occupied,events,
+                           blocked_tiles(meta,field.map_id)) is not None)]
         if not viable:
             state["status"]="no_reachable_native_events"
             return False
@@ -277,17 +309,9 @@ class Explorer:
                 # Walking *onto* a trigger is the event, not standing on it.
                 # Re-enter via one known safe adjacent tile rather than
                 # pressing A or relying on Qwen's guessed directions.
-                hazards={(e["x"],e["y"]) for e in events
-                         if e["kind"] in ("warp","coord")}
-                detours=[]
-                for button,(dx,dy) in DIR.items():
-                    neighbor=(f.pos[0]+dx,f.pos[1]+dy)
-                    if (neighbor not in warps and neighbor not in hazards
-                            and neighbor not in occupied and neighbor not in blocked
-                            and f.passable(*neighbor)):
-                        detours.append((button,neighbor))
-                if detours:
-                    button,neighbor=detours[0]
+                detour=reentry_neighbor(f,occupied,events,blocked)
+                if detour:
+                    button,neighbor=detour
                     return ({"scene":"native_event_reentry",
                              "objective":"Re-enter previously attempted native trigger",
                              "actions":[{"button":button,
@@ -408,6 +432,28 @@ class Explorer:
             self.interrupt(meta,"battle")
             return
         f=before[0];kind,expected=command
+        trigger=goal["event"].get("kind") in ("warp","coord")
+        attempted_entry=(kind=="move" and trigger and
+                         expected is not None and
+                         tuple(expected)==tuple(goal["target"]))
+        if attempted_entry or kind in ("interact","cross"):
+            # Reporting a reached tile is not reporting a story transition.
+            # These bounded, ROM-neutral witnesses let the remote harness
+            # distinguish route failure, script entry, and actual map crossing.
+            successor=after[0] if after else None
+            same_map=successor is not None and successor.map_id==f.map_id
+            status=("unverified_after_input" if successor is None else
+                    "map_transition" if not same_map else
+                    "trigger_tile_entered" if attempted_entry and
+                       tuple(successor.pos)==tuple(goal["target"]) else
+                    "interaction_issued" if kind=="interact" else
+                    "crossing_issued" if kind=="cross" else
+                    "trigger_not_entered")
+            witness={"event":goal["key"],"kind":goal["event"]["kind"],
+                     "result":status,"decision":meta.get("decisions",0)+1}
+            rows=meta.setdefault("native_event_witnesses",[])
+            rows.append(witness)
+            meta["native_event_witnesses"]=rows[-48:]
         if kind=="move" and expected is not None:
             outcome=record_tile_step(meta,before,after,command,
                 verified_before=self.adapter.verified_field(before,meta),

@@ -52,6 +52,47 @@ class TestExplorer(unittest.TestCase):
         self.assertEqual(meta["native_revisit"]["sweeps"],1)
         self.assertTrue(ex.reconsider(candidate,meta,([warp,coord],None)))
 
+    def test_normal_warp_request_reenters_without_first_exhausting_scout(self):
+        f=Field((43,1),(4,2),8,8,(0,)*64)
+        warp={"kind":"warp","x":4,"y":2,"id":0,"destination":[43,2]}
+        coord={"kind":"coord","x":4,"y":2,"id":1}
+        before=(f,0x08001235,set())
+        ex=Explorer(MockAdapter());meta={"native_party_count":3}
+        info=([warp,coord],None)
+        self.assertTrue(ex.request(before,meta,info,"exit"))
+        self.assertEqual(meta["event_goal"]["event"],warp)
+        self.assertTrue(meta["event_goal"]["retry"])
+        off,command=ex.next(before,meta,info)
+        self.assertEqual(off["scene"],"native_event_reentry")
+        self.assertEqual(command,("move",(4,1)))
+        away=(Field(f.map_id,(4,1),8,8,f.tiles),0x08001235,set())
+        ex.finish(meta,before,away,command)
+        self.assertIn("event_goal",meta)
+        go,command=ex.next(away,meta,info)
+        self.assertEqual(go["actions"],[{"button":"DOWN","frames":1}])
+        self.assertEqual(command,("move",(4,2)))
+        ex.finish(meta,away,before,command)
+        self.assertEqual(meta["native_event_witnesses"][-1]["result"],"trigger_tile_entered")
+        self.assertIsNone(ex.next(before,meta,info))
+        self.assertIn(event_key(f,warp),meta["event_attempts"])
+
+    def test_event_witness_distinguishes_unverified_entry_from_map_transition(self):
+        f=Field((43,1),(4,3),8,8,(0,)*64)
+        warp={"kind":"warp","x":4,"y":2,"id":0,"destination":[43,2]}
+        c=(f,0x08001235,set());ex=Explorer(MockAdapter());meta={}
+        info=([warp],None)
+        self.assertTrue(ex.request(c,meta,info,"exit"))
+        result,cmd=ex.next(c,meta,info)
+        ex.finish(meta,c,None,cmd)
+        self.assertEqual(meta["native_event_witnesses"][-1]["result"],
+                         "unverified_after_input")
+        meta={}
+        self.assertTrue(ex.request(c,meta,info,"exit"))
+        changed=(Field((43,2),(3,4),8,8,(0,)*64),0x08001235,set())
+        ex.finish(meta,c,changed,cmd)
+        self.assertEqual(meta["native_event_witnesses"][-1]["result"],
+                         "map_transition")
+
     def test_retry_warp_standing_on_trigger_steps_off_and_reenters(self):
         from core.firered import Field
         f=Field((43,1),(4,2),8,8,(0,)*64)
