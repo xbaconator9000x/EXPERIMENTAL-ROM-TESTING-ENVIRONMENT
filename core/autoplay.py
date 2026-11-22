@@ -376,8 +376,10 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                                 "Inspect the current screen and propose one safe "
                                 "short button, or review if a choice is ambiguous.",
                     "actions":[]}])
+                recovery_model=(model.model if index==0 else
+                                (model.fallback or model.model))
                 proposal=model._decide(frame,goal,context,[],meta.get("quest_memory",{}),
-                                       model.model,False)
+                                       recovery_model,False)
                 proposal=parse_decision(json.dumps(proposal))
                 if proposal["review"] or len(proposal["actions"])!=1:return None
                 action=proposal["actions"][0]
