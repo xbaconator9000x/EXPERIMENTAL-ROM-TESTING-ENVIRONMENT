@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from core.autoplay import parse_decision, choose, png, save_progress, load_progress, play, title_recovery, model_error
+from core.autoplay import parse_decision, choose, png, save_progress, load_progress, play, title_recovery, model_error, settle_frames
 from windows.autoplay import goal
 
 def decision(button="A"):
@@ -51,6 +51,15 @@ class AutoTests(unittest.TestCase):
                 self.assertEqual(meta2["decisions"],5);self.assertGreater(meta2["frames"],meta["frames"])
                 self.assertNotEqual(rgb,rgb2)
                 with self.assertRaises(ValueError):play(runner,folder/"rom","a"*64,"different goal",folder,Model(),max_decisions=6)
+    def test_stale_dialogue_label_does_not_force_150_idle_frames(self):
+        d={"scene":"native_dialogue","objective":"Advance recognized ordinary dialogue page",
+           "actions":[{"button":"UP","frames":16}],"review":False}
+        self.assertEqual(settle_frames(d,"vision_compact",visible_dialogue=False),24)
+        self.assertEqual(settle_frames(d,"vision_compact",visible_dialogue=True),150)
+        self.assertEqual(settle_frames(d,"vision_compact"),150)
+        self.assertEqual(settle_frames({"scene":"field","actions":[{"button":"DOWN","frames":16}],
+                        "objective":"escape","review":False},"vision_compact",visible_dialogue=False),24)
+
     def test_checkpoint_integrity(self):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)/"state";save_progress(p,{"id":1},{"turn":1},b"a",bytes(115200))
