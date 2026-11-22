@@ -141,6 +141,46 @@ def script_settle(meta,screen,*,limit=32):
             "actions":[{"button":"WAIT","frames":24}],"review":False}
 
 
+def rearm_after_script_recovery(meta,field,*,unlocked=False,visible_dialogue=False):
+    """One-shot replan after *observed* dialogue completion.
+
+    A visually changed page is not proof that the field has been unlocked.
+    Keep the recovery pending until the native callback/map is readable,
+    script control is released, and the dialogue panel is gone. Preserve the
+    verified map/tile history; retire only the completed interaction's
+    attempted-event and strategic-exhaustion budgets.
+    """
+    state=meta.get("recovery_resume")
+    if not isinstance(state,dict) or state.get("kind")!="native_script_locked":
+        return False
+    if state.get("phase")!="pending" or not unlocked or visible_dialogue or not field:
+        return False
+    field_id=list(field[0].map_id)
+    archive=meta.setdefault("prior_event_attempts",[])
+    attempts=meta.get("event_attempts",[])
+    if isinstance(archive,list) and isinstance(attempts,list) and attempts:
+        archive.append({"reason":"new_script_epoch","attempts":attempts[-128:]})
+        meta["prior_event_attempts"]=archive[-4:]
+    meta["event_attempts"]=[]
+    for key in ("event_goal","native_route","native_revisit",
+                "field_strategic_referral","native_vision_budget",
+                "exceptional_vision","bootstrap","stale_script_field"):
+        meta.pop(key,None)
+    # Existing world and tile observations remain authoritative; the
+    # story interaction can change available exits without changing the map.
+    objective=meta.get("objective_state")
+    if isinstance(objective,dict) and objective.get("phase")=="explore_and_advance_story":
+        task=objective.get("task","")
+        if (not task or task.startswith(("Allow verified text printer",
+                "Allow locked field script","Advance recognized ordinary dialogue",
+                "Advance native-confirmed full-width dialogue",
+                "Allow native auto-scroll text"))):
+            objective["task"]="Find the next verified story interaction or map exit."
+            objective["task_source"]="campaign_priority_after_dialogue"
+    state.update(phase="calibrating",map=field_id)
+    return True
+
+
 def field_strategic_referral(meta,field,*,limit=2):
     """A rare strategic visual consult after 24 native event approaches.
 
@@ -244,6 +284,8 @@ def vision_stall(meta, field, *, limit=8):
 
 TACTICAL_OBJECTIVES=(
     "Allow locked field script",
+    "Allow verified text printer",
+    "Advance native-confirmed full-width dialogue",
     "Escape repeated field cycle",
     "Survey a new native-verified walkable tile",
     "Approach observed warp",
@@ -379,12 +421,22 @@ def diagnostic(adapter,battles,menus,field,meta):
             "world":world_summary(meta),"tile_learning":tile_diagnostics(meta)}
 
 
-def bootstrap(meta,candidate,screen):
-    """Obtain native movement witnesses in a plausible field without model
-    calls for every probe. Same map/callback capped at four ordinary moves."""
+def bootstrap(meta,candidate,screen,*,post_dialogue=False):
+    """Obtain native movement witnesses in a plausible field without a model.
+
+    Post-dialogue calibration is gated by a structurally readable native field
+    and independently observed script release. Ordinary bootstrap still needs
+    the prior field/title witness. At most four inputs per callback and map.
+    """
     if not candidate:return None
+    if post_dialogue:
+        pending=meta.get("recovery_resume",{})
+        if (not isinstance(pending,dict) or
+                pending.get("phase")!="calibrating" or
+                pending.get("map")!=list(candidate[0].map_id)):
+            return None
     history=meta.get("history",[])
-    if not field_hint(history):
+    if not post_dialogue and not field_hint(history):
         # A ROM-verified native field is stronger evidence than repeated
         # hallucinated 'title_screen' labels. This only permits bounded
         # ordinary movement with Reader-validated map/player structures.
@@ -404,7 +456,7 @@ def bootstrap(meta,candidate,screen):
     for d,(dx,dy) in DIR.items():
         p=(f.pos[0]+dx,f.pos[1]+dy)
         if d in previous or d in tried or p in occupied or not f.passable(*p):continue
-        action={"button":d,"frames":1}
+        action={"button":d,"frames":16 if post_dialogue else 1}
         if quarantined(meta,screen,[action]):continue
         tried.append(d)
         return {"scene":"field_calibration","objective":"Verify native field coordinates with ordinary movement","actions":[action],"review":False}
