@@ -5,9 +5,39 @@ param(
     [ValidatePattern('^[A-Za-z0-9-]+/[A-Za-z0-9_.-]+$')][string]$Queue = 'xbaconator9000x/ROM-TESTING-QUEUE',
     [ValidatePattern('^[A-Za-z0-9-]{1,39}$')][string]$Author = 'xbaconator9000x',
     [switch]$EnableUpstreamLeafGreen,
-    [switch]$NativeOnly
+    [switch]$NativeOnly,
+    [switch]$InstallerPinned
 )
 $ErrorActionPreference = 'Stop'
+# The locally retained installer can predate newly required Python modules.
+# Re-execute the installer from the exact requested immutable commit, so the
+# download manifest and code always describe the SAME revision. This also
+# keeps previous installations usable for future pinned source upgrades.
+if (!$InstallerPinned) {
+    $pinnedInstaller = Join-Path $env:TEMP ("rom-player-installer-" + [Guid]::NewGuid().ToString('N') + '.ps1')
+    try {
+        $installerUrl = "https://raw.githubusercontent.com/xbaconator9000x/EXPERIMENTAL-ROM-TESTING-ENVIRONMENT/$Commit/windows/install_autoplay.ps1"
+        Write-Host 'Loading the installer manifest from the pinned commit...' -ForegroundColor Cyan
+        Invoke-WebRequest -UseBasicParsing -Uri $installerUrl -OutFile $pinnedInstaller
+        if (!(Test-Path $pinnedInstaller) -or (Get-Item $pinnedInstaller).Length -lt 1024) {
+            throw 'Pinned installer download was incomplete; existing installation preserved.'
+        }
+        $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$pinnedInstaller,
+                  '-Commit',$Commit,'-Queue',$Queue,'-Author',$Author)
+        if (Select-String -LiteralPath $pinnedInstaller -SimpleMatch '[switch]$InstallerPinned' -Quiet) {
+            $args += '-InstallerPinned'
+        }
+        if ($EnableUpstreamLeafGreen) { $args += '-EnableUpstreamLeafGreen' }
+        if ($NativeOnly) { $args += '-NativeOnly' }
+        & powershell.exe @args
+        if ($LASTEXITCODE -ne 0) {
+            throw "Pinned installer failed (exit code $LASTEXITCODE)."
+        }
+    } finally {
+        if (Test-Path $pinnedInstaller) { Remove-Item $pinnedInstaller -Force }
+    }
+    return
+}
 $root = (Get-Location).Path
 if (!(Test-Path '.\build\live_runner.exe') -or !(Test-Path '.\windows\host.py')) {
     throw 'Open PowerShell inside the existing testing harness folder first.'
@@ -95,6 +125,15 @@ try {
     throw
 } finally {
     if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+}
+# Refresh the local installer only after all pinned-file regression tests pass.
+# Keep the gameplay installation usable even if Windows refuses this script copy.
+if ($PSCommandPath) {
+    try {
+        Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $root 'windows/install_autoplay.ps1') -Force
+    } catch {
+        Write-Warning 'Player updated, but the local installer could not be refreshed. Re-download it before the next upgrade.'
+    }
 }
 Write-Host 'Player installed. The original gameplay checkpoint is retained.' -ForegroundColor Green
 Start-Process -FilePath $py -ArgumentList '-3.12','-m','windows.dashboard','--queue',$Queue -WorkingDirectory $root
