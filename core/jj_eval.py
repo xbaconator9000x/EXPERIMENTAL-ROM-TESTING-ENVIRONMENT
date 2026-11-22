@@ -296,11 +296,21 @@ def run_isolated(scenario,checkpoint,output_root,runner,rom,rom_sha,goal,model,
         if status=="RUNNING":
             interim=evaluate(scenario,baseline,meta,identity,status=status)
             if interim["result"]=="PASS":goal_reached=True
-    status,final,last_rgb=player(runner,rom,rom_sha,goal,scratch,model,
+    status,reported,last_rgb=player(runner,rom,rom_sha,goal,scratch,model,
                           max_decisions=baseline["decisions"]+budget,
                           should_stop=lambda:goal_reached,report=report)
+    # Never grade an in-memory or model-reported achievement without proof
+    # that the copied episode checkpoint actually persisted that state.
+    persisted=load_progress(scratch/"progress.bin",identity)
+    if persisted is None:raise ValueError("Isolated episode checkpoint missing")
+    final,episode_state,episode_rgb=persisted
     result=evaluate(scenario,baseline,final,identity,status=status,
                     audit=scratch/"actions.jsonl")
+    if (not isinstance(reported,dict)
+            or reported.get("decisions")!=final.get("decisions")
+            or episode_rgb!=last_rgb):
+        result["result"]="FAIL"
+        result["reason"]="returned_state_does_not_match_isolated_checkpoint"
     result["scratch_directory"]=str(scratch)
     result["episode_identity"]={
         "original_checkpoint_sha256":original_hash,
