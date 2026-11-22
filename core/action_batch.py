@@ -16,18 +16,20 @@ def digest(rgb):
     return hashlib.sha256(rgb).hexdigest()
 
 
-def prepare(decision, source, *, battle=False, menu=False):
+def prepare(decision, source, *, battle=False, menu=False, field_witness=False):
     """Split a verified bounded field proposal into an initial input and queue.
 
-    Refuse batching if a battle/menu is visible or the model did not explicitly
-    report a field. Vision-only ROMs are never allowed to batch battle turns.
+    Refuse batching if a battle/menu is visible or neither the model nor the
+    native/field-history controller corroborates a field. Vision-only ROMs
+    are never allowed to batch battle turns.
     """
     actions = decision.get("actions")
     observed = decision.get("observation") or {}
     if not source.startswith("vision") or decision.get("review") or not isinstance(actions, list) or len(actions) <= 1:
         return decision, None
     safe_field = (not battle and not menu and isinstance(observed, dict)
-                  and observed.get("stage") == "field" and len(actions) <= MAX_BATCH
+                  and (observed.get("stage") == "field" or field_witness)
+                  and len(actions) <= MAX_BATCH
                   and all(isinstance(a, dict) and a.get("button") in MOVEMENT
                           and type(a.get("frames")) is int and 1 <= a["frames"] <= 24
                           for a in actions))
@@ -43,6 +45,37 @@ def prepare(decision, source, *, battle=False, menu=False):
         "expected_screen": None,
     }
     return {**decision, "actions": [dict(actions[0])]}, queued
+
+
+def momentum(decision,source,history,*,field_witness=False,native_verified=False,battle=False,menu=False):
+    """Expand a one-step field plan only after two witnessed forward steps.
+
+    The inference is still one step at a time in unfamiliar/uncorroborated
+    screens. With a credible field witness, two consecutive successful visual
+    transitions in the same direction allow a *short* speculative continuation:
+    at most 4 steps total with visual-only corroboration, or 10 with a
+    verified native field. Every step is separately rechecked and checkpointed.
+    """
+    actions=decision.get("actions")
+    if (not field_witness or battle or menu or not source.startswith("vision")
+            or decision.get("review") or not isinstance(actions,list)
+            or len(actions)!=1 or not isinstance(actions[0],dict)):
+        return decision,None
+    action=actions[0]
+    button=action.get("button")
+    if button not in MOVEMENT or type(action.get("frames")) is not int or not 8<=action["frames"]<=24:
+        return decision,None
+    if not isinstance(history,list) or len(history)<2:return decision,None
+    recent=history[-2:]
+    if any(not isinstance(h,dict) or h.get("before")==h.get("after")
+           or not isinstance(h.get("actions"),list) or len(h["actions"])!=1
+           or h["actions"][0].get("button")!=button
+           or type(h["actions"][0].get("frames")) is not int
+           or not 8<=h["actions"][0]["frames"]<=24 for h in recent):
+        return decision,None
+    limit=MAX_BATCH if native_verified else 4
+    expanded={**decision,"actions":[dict(action) for _ in range(limit)]}
+    return prepare(expanded,source,battle=battle,menu=menu,field_witness=True)
 
 
 def frame_is_safe(before, after):
