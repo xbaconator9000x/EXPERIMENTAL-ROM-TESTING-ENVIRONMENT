@@ -153,10 +153,10 @@ class EvidenceScoringTests(unittest.TestCase):
         history=[
             {"decision":11,"before":A,"after":B,"source":"native_explore",
              "actions":[{"button":"RIGHT","frames":1}],
-             "field_after":{"map":[1,2],"pos":[1,1]}},
+             "field_after":{"map":[1,2],"pos":[1,1]},"elapsed_seconds":6.25},
             {"decision":12,"before":B,"after":C,"source":"native_explore",
              "actions":[{"button":"RIGHT","frames":12}],
-             "field_after":{"map":[1,2],"pos":[1,1]}},
+             "field_after":{"map":[1,2],"pos":[1,1]},"elapsed_seconds":8.5},
             {"decision":13,"before":C,"after":D,"source":"native_explore",
              "actions":[{"button":"UP","frames":1}],
              "field_after":{"map":[1,2],"pos":[1,0]}},
@@ -165,6 +165,8 @@ class EvidenceScoringTests(unittest.TestCase):
         self.assertEqual(x["result"],"FAIL")
         self.assertEqual(x["metrics"]["stuck_ratio"],0.6667)
         self.assertEqual(x["metrics"]["verified_no_progress"],2)
+        self.assertEqual(x["metrics"]["verified_stall_seconds"],14.75)
+        self.assertEqual(x["metrics"]["native_decisions_per_model_call"],3.0)
         self.assertTrue(x["metrics"]["audit_limited"])
         y=evaluate("navigation_progress",b,result(b,[],history=[
             {"decision":11,"before":A,"after":D,"source":"vision_compact",
