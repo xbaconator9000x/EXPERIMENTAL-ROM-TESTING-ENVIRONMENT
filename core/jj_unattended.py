@@ -116,14 +116,14 @@ def alternative(meta,screen,candidate,history):
     return None
 
 def vision_stall(meta, field, *, limit=8):
-    """Stop repeated expensive inference on the same verified field map.
+    """Stop repeated expensive inference on any verified field map.
 
     Fail closed with a checkpoint/review rather than heat the host while
     vision repeatedly reverses ordinary movement. Native exploration does
     not consume this budget; a verified map crossing or acquired party
     clears the no-progress condition.
     """
-    if not field or meta.get("objective_state",{}).get("phase")!="obtain_initial_party":
+    if not field:
         return False
     history=meta.get("history",[])
     if not isinstance(history,list):return False
