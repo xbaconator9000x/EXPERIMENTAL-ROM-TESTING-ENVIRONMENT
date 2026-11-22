@@ -225,7 +225,7 @@ def load_progress(path,identity):
         raise ValueError("Checkpoint identity or integrity mismatch")
     return header["meta"],state,rgb
 
-def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lambda *args:None,guidance=lambda *args:None,max_decisions=100000):
+def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lambda *args:None,guidance=lambda *args:None,max_decisions=100000,control=None):
     """Run immediately between model replies, preserving a real native checkpoint each turn."""
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True)
     path=folder/"progress.bin"
@@ -269,6 +269,10 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
         session_frames=0;last_report=0.0;startup_report=True
         while meta["decisions"]<max_decisions:
             if should_stop():return "STOPPED",meta,rgb
+            if control:
+                live,meta,rgb,changed=control.serve(live,meta,rgb,should_stop)
+                if changed:acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
+                if should_stop():return "STOPPED",meta,rgb
             turn_started=time.perf_counter();model_elapsed=None
             adapter.attach(live)
             field_before=adapter.candidate(rgb)
@@ -337,16 +341,35 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             try:
                 if decision is None:
                     mstart=time.perf_counter()
-                    if isinstance(model,OllamaVision):
-                        if model.structured and "map" in model.structured:model.structured.update(explorer.describe(field_before,meta,events))
-                        decision=model.decide(rgb,goal,history,blocked,meta.get("quest_memory",{}));source=model.last_source
-                    else:decision=model.decide(rgb,goal,history,blocked)
+                    if isinstance(model,OllamaVision) and model.structured and "map" in model.structured:
+                        model.structured.update(explorer.describe(field_before,meta,events))
+                    def infer():
+                        if isinstance(model,OllamaVision):
+                            return model.decide(rgb,goal,history,blocked,meta.get("quest_memory",{}))
+                        return model.decide(rgb,goal,history,blocked)
+                    if control:
+                        from core.operator_model import interruptible_decision
+                        proposal,live,meta,rgb,stale,stopped=interruptible_decision(infer,control,live,meta,rgb,should_stop)
+                        if stopped:return "STOPPED",meta,rgb
+                        if stale:
+                            acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
+                            continue
+                        decision=proposal
+                    else:decision=infer()
+                    if isinstance(model,OllamaVision):source=model.last_source
                     model_elapsed=time.perf_counter()-mstart
                 decision=parse_decision(json.dumps(decision))
             except (ValueError,KeyError,OSError,TimeoutError) as exc:
                 meta["model_error"]=model_error(exc)
                 save_progress(path,identity,meta,live.save_state(),rgb)
-                report("MODEL_UNAVAILABLE_OR_INVALID",meta,rgb);return "MODEL_UNAVAILABLE_OR_INVALID",meta,rgb
+                report("MODEL_UNAVAILABLE_OR_INVALID",meta,rgb)
+                if control:
+                    control.review=True
+                    live,meta,rgb,_=control.serve(live,meta,rgb,should_stop)
+                    if should_stop():return "STOPPED",meta,rgb
+                    acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
+                    continue
+                return "MODEL_UNAVAILABLE_OR_INVALID",meta,rgb
             meta.pop("model_error",None)
             meta.pop("review",None)
             if should_stop():return "STOPPED",meta,rgb
@@ -378,7 +401,14 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if not actions:
                 meta["review"]={"scene":decision["scene"],"objective":decision["objective"],"reason":"model review" if decision["review"] else "no untried bounded action"}
                 save_progress(path,identity,meta,live.save_state(),rgb)
-                report("NEEDS_REVIEW",meta,rgb);return "NEEDS_REVIEW",meta,rgb
+                report("NEEDS_REVIEW",meta,rgb)
+                if control:
+                    control.review=True
+                    live,meta,rgb,_=control.serve(live,meta,rgb,should_stop)
+                    if should_stop():return "STOPPED",meta,rgb
+                    acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
+                    continue
+                return "NEEDS_REVIEW",meta,rgb
             # Segment the native 200k-frame guard without losing game state.
             settle=150 if source=="fast_dialogue" else (150 if event_command and event_command[0] in ("interact","cross") else 16) if source in ("native_route","native_explore") else settle_frames(decision,source)
             cost=sum(a["frames"]+settle for a in actions)
@@ -477,7 +507,14 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     continue
                 meta["review"]={"scene":decision["scene"],"objective":decision["objective"],"reason":"repeated screen cycle; alternative action required"}
                 save_progress(path,identity,meta,state,rgb)
-                report("NEEDS_REVIEW",meta,rgb);return "NEEDS_REVIEW",meta,rgb
+                report("NEEDS_REVIEW",meta,rgb)
+                if control:
+                    control.review=True
+                    live,meta,rgb,_=control.serve(live,meta,rgb,should_stop)
+                    if should_stop():return "STOPPED",meta,rgb
+                    acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
+                    continue
+                return "NEEDS_REVIEW",meta,rgb
         return "BUDGET_REACHED",meta,rgb
     finally:
         if live is not None:live.close()
