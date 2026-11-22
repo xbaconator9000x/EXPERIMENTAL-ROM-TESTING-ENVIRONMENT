@@ -39,7 +39,9 @@ def ordinary_dialogue(rgb):
     if len(rgb)!=115200:return None
     def colors(y):
         return [tuple(rgb[(y*240+x)*3:(y*240+x)*3+3]) for x in range(240)]
-    def red(p):return p[0]>=175 and 35<=p[1]<=145 and 25<=p[2]<=125 and p[0]>p[1]+65
+    # Actual v1.03.3 full-width dialogue border is orange RGB (206,82,0).
+    # Older detector incorrectly required blue >=25, rejecting every pixel.
+    def red(p):return p[0]>=175 and 30<=p[1]<=155 and p[2]<=135 and p[0]>p[1]+65
     def white(p):return min(p)>=232
     def gray(p):return 45<=p[0]<=125 and abs(p[0]-p[1])<=24 and abs(p[1]-p[2])<=24
     def navy(p):return p[0]<=100 and p[1]<=110 and 20<=p[2]<=170 and p[2]>=max(p[0],p[1])+8
@@ -54,16 +56,24 @@ def ordinary_dialogue(rgb):
                 start=None
         return best
     borders=[]
-    for y in range(110,120):
+    for y in range(110,121):
         x0,x1=run(colors(y),red)
         if x1-x0>=180:borders.append((y,x0,x1))
-    if len(borders)<2:return None
+    # A real scaled screenshot can have one thick aligned border scanline,
+    # rather than two. The full-width fill, text and lower-edge witnesses
+    # below must also pass before an automatic A press is allowed.
+    if not borders:return None
     y,x0,x1=borders[0]
     # Field dialogue spans the screen; the centered battle-mode explanation
     # is deliberately left to the planner because it contains setting choices.
     if x0>10 or x1<229:return None
-    white_box=all(sum(white(p) for p in colors(i)[12:228])>=150 for i in (125,147))
-    navy_box=all(sum(navy(p) for p in colors(i)[12:228])>=150 for i in (125,147))
+    # Heavily populated second lines of text obscure much of the white body.
+    # Require a largely white first interior line plus a meaningful white
+    # second line, rather than treating the dark text as missing dialogue.
+    white_box=(sum(white(p) for p in colors(125)[12:228])>=150
+               and sum(white(p) for p in colors(147)[12:228])>=75)
+    navy_box=(sum(navy(p) for p in colors(125)[12:228])>=150
+              and sum(navy(p) for p in colors(147)[12:228])>=75)
     if not white_box and not navy_box:return None
     # Original script dialogue uses a white body; Jessie & James v1.03.3 also
     # uses a dark-blue interior with white glyphs. Require a full-width lower
