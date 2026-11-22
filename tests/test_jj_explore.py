@@ -358,6 +358,48 @@ class TestExplorer(unittest.TestCase):
         self.assertEqual(second["actions"],[{"button":"A","frames":5}])
         self.assertEqual(cmd[0],"interact")
 
+    def test_intermediate_coordinate_script_does_not_blacklist_exit(self):
+        # A trigger at (2,1) can interrupt travel toward the real warp.
+        # No native trace ever reached the warp at (5,1).
+        f=Field((43,1),(1,1),6,3,tuple(
+            0 if y==1 else 0x400 for y in range(3) for x in range(6)))
+        warp={"kind":"warp","x":5,"y":1,"id":0,"destination":[43,2]}
+        coord={"kind":"coord","x":2,"y":1,"id":1}
+        info=([warp,coord],None)
+        before=(f,0x08001235,set())
+        for after in (None,(Field((43,3),(4,4),6,6,(0,)*36),
+                            0x08001235,set())):
+            with self.subTest(after=after):
+                meta={"native_party_count":3}
+                ex=Explorer(MockAdapter())
+                self.assertTrue(ex.request(before,meta,info,"exit"))
+                _,command=ex.next(before,meta,info)
+                self.assertEqual(command,("move",(2,1)))
+                ex.finish(meta,before,after,command)
+                self.assertNotIn("event_goal",meta)
+                self.assertEqual(meta.get("event_attempts",[]),[])
+                self.assertEqual(meta.get("map_transitions",[]),[])
+                self.assertEqual(meta["skill_interruptions"][-1]["reason"],
+                                 "transition")
+                self.assertEqual(meta["skill_interruptions"][-1]["event"],
+                                 event_key(f,warp))
+
+    def test_midroute_unexpected_position_replans_without_event_attempt(self):
+        f=Field((43,1),(1,1),6,3,(0,)*18)
+        warp={"kind":"warp","x":5,"y":1,"id":0,"destination":[43,2]}
+        info=([warp],None)
+        before=(f,0x08001235,set())
+        after=(Field(f.map_id,(1,2),6,3,f.tiles),0x08001235,set())
+        ex=Explorer(MockAdapter());meta={}
+        self.assertTrue(ex.request(before,meta,info,"exit"))
+        _,command=ex.next(before,meta,info)
+        self.assertNotEqual(command[1],warp["x"])
+        ex.finish(meta,before,after,command)
+        self.assertEqual(meta.get("event_attempts",[]),[])
+        self.assertNotIn("event_goal",meta)
+        self.assertEqual(meta["skill_interruptions"][-1]["reason"],
+                         "movement_mismatch")
+
     def test_native_script_trigger_settles_without_stealing_extra_inputs(self):
         # The same code controls the real live_runner settle budget. The
         # script/warp may start after the movement tick, not immediately.

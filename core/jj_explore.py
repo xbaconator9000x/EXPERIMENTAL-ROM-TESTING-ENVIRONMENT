@@ -475,7 +475,7 @@ class Explorer:
         route; the agent must re-plan from the next corroborated field state.
         The event stays eligible for another attempt.
         """
-        if reason not in ("battle","menu","transition"):return False
+        if reason not in ("battle","menu","transition","movement_mismatch"):return False
         goal=meta.pop("event_goal",None)
         if not isinstance(goal,dict):return False
         row={"map":goal.get("map"),"event":goal.get("key"),"reason":reason}
@@ -545,6 +545,19 @@ class Explorer:
                 # event itself as attempted.
                 meta.pop("event_goal",None)
                 return
+        if (kind=="move" and expected is not None
+                and tuple(expected)!=tuple(goal["target"])
+                and (after is None or after[0].map_id!=f.map_id
+                     or after[0].pos!=expected)):
+            # An intermediate coordinate script, warp animation or unexpected
+            # relocation interrupted this ROUTE, not the targeted event.
+            # The independently verified field recorder owns actual map
+            # transitions. Never attribute them to an unreached exit or
+            # blacklist that exit in the event_attempts ledger.
+            reason=("transition" if after is None or after[0].map_id!=f.map_id
+                    else "movement_mismatch")
+            self.interrupt(meta,reason)
+            return
         if after and after[0].map_id!=f.map_id:
             edges=meta.get("map_transitions",[])
             edge={"from":list(f.map_id),"to":list(after[0].map_id),"event":goal["event"]["id"]}
