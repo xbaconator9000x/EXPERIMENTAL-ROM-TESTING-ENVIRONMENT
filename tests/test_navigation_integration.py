@@ -190,6 +190,52 @@ class NativeRecoveryIntegrationTests(unittest.TestCase):
         self.assertEqual(meta["world_model"]["edges"],[])
         self.assertNotIn("skill_outcomes",meta["world_model"])
 
+    def test_production_navigation_leg_interrupted_by_battle_is_replanned(self):
+        from core.firered import Field
+        from core.jj_explore import Explorer as ActualExplorer
+
+        class FieldAdapter(LocalAdapter):
+            def candidate(self,rgb):
+                return (Field((1,2),(1,1),6,6,(0,)*36),
+                        0x08001235,{(3,1)})
+            def verified_field(self,c,meta):return c is not None
+
+        class PartyAcceptance(LocalAcceptance):
+            enabled=True
+            def read_party(self,live):return []
+
+        class BattleStarts(LocalBattles):
+            def bag(self,live):return {"balls":[],"items":[]}
+            def snapshot(self,live):
+                if live.value!=162:
+                    return {"stage":"battle_command","callback":0x08009999}
+                return None
+
+        class EventExplorer(ActualExplorer):
+            def inspect(self,candidate,meta):
+                return ([{"kind":"npc","x":3,"y":1,"id":1,"gfx":12}],"RIGHT")
+
+        model=CountingModel()
+        sha="a"*64
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);runner=root/"runner";runner.write_bytes(b"native fake")
+            with ExitStack() as stack:
+                for name,value in (("Live",LocalLive),("Adapter",FieldAdapter),
+                    ("BattleAdapter",BattleStarts),("MenuDriver",LocalMenus),
+                    ("Explorer",EventExplorer),("Acceptance",PartyAcceptance),
+                    ("JJ_RELEASES",{sha})):
+                    stack.enter_context(patch("core.autoplay."+name,value))
+                stack.enter_context(patch("core.autoplay.try_catalog",return_value=None))
+                stack.enter_context(patch("core.autoplay.open_profile",return_value=(None,None)))
+                status,meta,rgb=play(runner,root/"rom",sha,
+                    "Find initial team",root,model,max_decisions=1)
+        self.assertEqual(status,"BUDGET_REACHED")
+        self.assertEqual(model.calls,0)
+        self.assertEqual(meta["history"][-1]["source"],"native_explore")
+        self.assertEqual(meta["skill_interruptions"][-1]["reason"],"battle")
+        self.assertNotIn("event_goal",meta)
+        self.assertEqual(meta.get("event_attempts",[]),[])
+
     def test_menu_blocks_all_automatic_navigation_recovery(self):
         meta,calls=self.run_sample(menu=True)
         self.assertEqual(calls,1)
