@@ -42,6 +42,8 @@ def ordinary_dialogue(rgb):
     def red(p):return p[0]>=175 and 35<=p[1]<=145 and 25<=p[2]<=125 and p[0]>p[1]+65
     def white(p):return min(p)>=232
     def gray(p):return 45<=p[0]<=125 and abs(p[0]-p[1])<=24 and abs(p[1]-p[2])<=24
+    def navy(p):return p[0]<=100 and p[1]<=110 and 20<=p[2]<=170 and p[2]>=max(p[0],p[1])+8
+    def ink(p):return p[0]<110 and p[1]<110 and p[2]<160
     def run(row,pred):
         best=(0,0);start=None
         for x,p in enumerate(row+[None]):
@@ -60,13 +62,23 @@ def ordinary_dialogue(rgb):
     # Field dialogue spans the screen; the centered battle-mode explanation
     # is deliberately left to the planner because it contains setting choices.
     if x0>10 or x1<229:return None
-    if sum(white(p) for p in colors(125))<150 or sum(white(p) for p in colors(147))<150:return None
-    if not any(sum(gray(p) for p in colors(i))>=175 for i in range(152,160)):return None
+    white_box=all(sum(white(p) for p in colors(i)[12:228])>=150 for i in (125,147))
+    navy_box=all(sum(navy(p) for p in colors(i)[12:228])>=150 for i in (125,147))
+    if not white_box and not navy_box:return None
+    # Original script dialogue uses a white body; Jessie & James v1.03.3 also
+    # uses a dark-blue interior with white glyphs. Require a full-width lower
+    # backing edge to reject transitional animation and partial windows.
+    if not any(sum(gray(p) or navy(p) for p in colors(i))>=175 for i in range(152,160)):return None
+    # Refuse an empty/opening dialogue box: A might become an interaction or a
+    # menu confirmation after a text animation has cleared.
+    glyphs=sum(sum(white(p) if navy_box else ink(p) for p in colors(i)[15:225])
+               for i in range(123,149,2))
+    if glyphs<12:return None
     # Additional colored/white panel above the dialogue (Yes/No, choice menu,
     # list, battle menu). Require two spaced orange horizontal runs over white.
     for row in range(0,105):
         lo,hi=run(colors(row),red)
-        if hi-lo>=24 and row+7<112 and sum(white(p) for p in colors(row+7)[lo:hi])>=max(12,(hi-lo)//2):
+        if hi-lo>=24 and row+7<112 and sum(white(p) or navy(p) for p in colors(row+7)[lo:hi])>=max(12,(hi-lo)//2):
             return None
     # A separate white panel without the orange frame is also ambiguous.
     for row in range(8,106,4):
@@ -190,6 +202,8 @@ def quick_dialogue(rgb,meta):
     for h in reversed(history):
         if h.get("source")!="fast_dialogue":break
         recent+=1
-    # Periodically require strategic interpretation; never unbounded button spam.
-    if recent>=6:return None
+    # Batch up to ten independently witnessed pages, then require a new
+    # strategic interpretation. Each press is checkpointed; never send ten
+    # unobserved A presses or auto-select YES/NO options.
+    if recent>=10:return None
     return {"scene":"native_dialogue","objective":"Advance recognized ordinary dialogue page","actions":[{"button":"A","frames":5}],"review":False},page
