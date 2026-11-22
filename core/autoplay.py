@@ -580,7 +580,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                         continue
                     return "EMULATOR_ERROR",meta,rgb
             if source=="native_battle":
-                intent=intent_from_battle(battle_before,decision)
+                intent=intent_from_battle(battle_before,decision,catalog)
                 if intent:meta["menu_intent"]=intent
             if source=="native_menu":menus.finish(meta,menu_before,menus.snapshot(live,meta),decision)
             elif meta.get("menu_intent") and source.startswith("vision"):
