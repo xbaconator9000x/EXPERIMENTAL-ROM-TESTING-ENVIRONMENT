@@ -124,9 +124,29 @@ def quest_state(meta,field,party,obs=None,objective=None):
         elif q["phase"] in ("obtain_initial_party","restore_party_health"):q["phase"]="explore_and_advance_story"
     if field and meta.get("observed_field_transitions") and "map_transition_observed" not in q["milestones"]:
         q["milestones"].append("map_transition_observed")
-    if obs and obs.get("fact"):
+    # Carry only witnessed native outcomes into durable quest milestones.
+    # Story text inferred by Qwen is a hypothesis, not a finished objective.
+    book=meta.get("party_knowledge",{})
+    outcomes=book.get("verified_outcomes",[]) if isinstance(book,dict) else []
+    for row in outcomes[-16:]:
+        if not isinstance(row,dict):continue
+        evidence={"battle_win":"battle_win_observed",
+                  "wild_capture":"capture_observed",
+                  "healing":"healing_observed"}.get(row.get("kind"))
+        if evidence and evidence not in q["milestones"]:q["milestones"].append(evidence)
+    world=meta.get("world_model",{})
+    if (isinstance(world,dict)
+            and any(isinstance(r,dict) and r.get("result")=="native_verified"
+                    for r in world.get("skill_outcomes",[]))
+            and "native_exit_observed" not in q["milestones"]):
+        q["milestones"].append("native_exit_observed")
+    if obs and isinstance(obs.get("fact"),str) and obs["fact"]:
         q["fact"]=obs["fact"][:180]
-    if objective:q["task"]=objective[:240]
+        q["fact_source"]="model_hypothesis_not_a_verified_story_flag"
+    if isinstance(objective,str) and objective:
+        q["task"]=objective[:240]
+        q["task_source"]="planner_proposal"
+    q["milestones"]=q["milestones"][-24:]
     return q
 
 def replay(open_live,state,actions,settle,buttons):
