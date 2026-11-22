@@ -1,6 +1,6 @@
 import struct
 import unittest
-from core.jj_fast import ordinary_dialogue,quick_dialogue,decode_party,ORDERS,Adapter,SHA
+from core.jj_fast import ordinary_dialogue,quick_dialogue,decode_party,ORDERS,Adapter,SHA,MAIN,SCRIPT,FADE
 from core.firered import Field
 
 def frame(choice=False,center=False,navy=False,blank=False,furniture=False):
@@ -66,6 +66,19 @@ class FastTests(unittest.TestCase):
         # safety also requires the full-width lower edge and text.
         rect(7,153,225,6,(4,8,12))
         self.assertIsNone(ordinary_dialogue(bytes(raw)))
+
+    def test_native_lock_flags_diagnose_only_and_do_not_bypass(self):
+        class FakeLive:
+            def __init__(self,script,fade):self.script,self.fade=script,fade
+            def integer(self,address,size):
+                return {MAIN+4:0x08000001,SCRIPT:self.script,FADE:self.fade}.get(address,0)
+        a=Adapter("unused","wrong")
+        a.admitted=True;a.size=0x10000
+        for script,fade in ((1,0),(0,1),(1,1)):
+            a.attach(FakeLive(script,fade))
+            self.assertIsNone(a.candidate(bytes(115200)))
+            self.assertEqual(a.reason,"SCRIPT_OR_FADE_LOCK")
+            self.assertEqual(a.lock_probe,{"script_active":bool(script),"fade_active":bool(fade)})
 
     def test_native_party_checksum(self):
         p=party();m=decode_party(p)[0];self.assertEqual((m["species_id"],m["hp"],m["moves"][0]),(19,18,33))
