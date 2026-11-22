@@ -40,3 +40,21 @@ STRUCTURALLY_READABLE applies solely to the observed map's layout and pointers,
 not to script opcode semantics, battle, quest progression or the entire ROM.
 Native Windows end-to-end compatibility must be demonstrated separately.
 The audit adds no controller inputs, model calls, or mutable game state.
+
+## Standard FRLG event-script prefix inspector
+The on-host map audit now samples at most eight distinct ROM-backed script
+entries per witnessed map. It decodes up to 24 **known-width** standard FRLG
+commands per entry (maximum 160 bytes) from pret/pokefirered
+asm/macros/event.inc, distinguishing possible dialogue, player choices,
+flag/variable checks, item operations, trainer events, warps, and native
+specials. A modified/unknown opcode, dynamic trainer/warp instruction, or
+branch stops inspection; the script is never executed speculatively.
+
+Map-header type 2 and 4 scripts are **conditional variable-pair tables**,
+not bytecode, per pret/pokefirered src/script.c. Their targets are inspected
+separately without evaluating live flags or claiming event completion.
+The private audit emits only aggregate intent categories and stop reasons.
+It does not expose text, item/flag IDs, bytecode, pointer addresses, script
+paths, secrets or saves. Standard-looking bytecodes in a ROM hack are still
+**hypotheses**, not proof of runtime semantics, and they cannot authorize
+controller inputs without independently verified live game state.

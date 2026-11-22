@@ -70,4 +70,27 @@ class RomHackMapAuditTests(unittest.TestCase):
         self.assertEqual(safe_map_audit(self.live,4096,self.field)["reason"],
                          "INVALID_ROM_POINTER")
 
+    def test_frame_table_is_conditional_var_pairs_not_direct_script(self):
+        # Source: pret/pokefirered src/script.c MapHeaderCheckScriptTable.
+        word(self.live.header,8,ROM_BASE+0x700)
+        self.live.rom[0x700]=2
+        word(self.live.rom,0x701,ROM_BASE+0x800)
+        word(self.live.rom,0x800,0x4020,2)
+        word(self.live.rom,0x802,1,2)
+        word(self.live.rom,0x804,ROM_BASE+0x600)
+        # 0x808 zero terminator, so one conditional row.
+        result=self.read()
+        self.assertEqual(result["map_script_entries"],1)
+        self.assertEqual(result["conditional_map_script_entries"],1)
+        self.assertEqual(result["checked_script_pointers"],4)
+
+    def test_prefix_intents_aggregated_without_private_script_contents(self):
+        self.live.rom[0x600:0x607]=bytes((0x69,0x67,0,0,0,0,0x02))
+        result=self.read()
+        self.assertGreaterEqual(result["script_prefixes_sampled"],1)
+        self.assertGreaterEqual(result["possible_script_intents"].get("dialogue_or_wait",0),1)
+        self.assertFalse(result["gameplay_compatibility_verified"])
+        self.assertNotIn("0x080",str(result))
+        self.assertNotIn("script_bytes",str(result))
+
 if __name__=="__main__":unittest.main()
