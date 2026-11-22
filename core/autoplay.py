@@ -499,7 +499,13 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if source.startswith("vision") or source in ("remote_guidance","field_recovery","batch_navigation"):adapter.observe_move(field_before,field_after,actions,meta)
             if meta.get("action_batch"):
                 proved=adapter.verified_field(field_before,meta)
-                field_ok=not proved or bool(field_after and adapter.verified_field(field_after,meta) and field_before[0].map_id==field_after[0].map_id and field_before[0].pos!=field_after[0].pos)
+                # Even before two-direction proof, a structurally valid native
+                # field witness must stay on the same map and actually move.
+                # If the field disappeared, do not continue any cached inputs.
+                field_ok=(True if field_before is None else
+                    bool(field_after and field_before[0].map_id==field_after[0].map_id
+                         and field_before[0].pos!=field_after[0].pos
+                         and (not proved or adapter.verified_field(field_after,meta))))
                 observe_action_batch(meta,rgb,after,field_ok=field_ok,dialogue=(ordinary_dialogue(after) is not None))
             record_field(meta,field_after,adapter.verified_field(field_after,meta))
             if source=="native_explore":explorer.finish(meta,field_before,field_after,event_command)
