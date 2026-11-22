@@ -3,7 +3,9 @@ import hashlib
 import json
 import os
 import tempfile
+import sys
 from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parent.parent))
 from core.live import Live
 from core.autoplay import digest
 from core.operator_control import OperatorControl,validate_command
