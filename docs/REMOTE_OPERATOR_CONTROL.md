@@ -80,3 +80,31 @@ If operator comments cannot be fetched, PowerShell prints
 Large screenshot-heavy issues are paginated at 20 comments per page to
 stay below the GitHub response limit. Never clear the local controller
 folder or delete the saved state to resolve a readiness failure.
+
+## Automated recovery before NEEDS_REVIEW
+
+The exact-release Jessie & James gameplay controller tries a bounded,
+checkpointed recovery ladder before requesting operator intervention when
+native scripted dialogue, navigation, or repeated-screen handling stalls:
+
+1. A up to 10 times at 10-second wall-clock intervals.
+2. B up to 10 times at the same interval.
+3. UP, DOWN, LEFT, RIGHT, up to 3 times each at the same interval.
+4. Up to two local Qwen consultations, each capped at one short GBA input.
+5. NEEDS_REVIEW if every eligible attempt fails.
+
+The first input is immediate; subsequent inputs are spaced by 10 actual
+seconds. No inference runs during the deterministic button ladder. An
+observed dialogue-page or substantial non-animated screen change interrupts
+the ladder and returns to normal native control; this is a *candidate scene
+transition*, not game-completion acceptance. A choice panel, battle or menu
+blocks blind confirmation and routes to the visual fallback. Human
+pause/input/restore commands interrupt the ladder. Before applying anything,
+the host saves an immutable, exact-identity local generation, and each native
+input checkpoints locally. No public ROM/save artifacts are created.
+
+The dashboard displays `AUTOMATIC RECOVERY` with the current stage. A
+completed exhausted ladder is recorded in local checkpoint metadata, and
+the identical stalled screenshot will not restart the full sequence after
+host restart. A previously parked `native_script_locked` checkpoint may
+automatically enter the ladder after installing the revised player.
