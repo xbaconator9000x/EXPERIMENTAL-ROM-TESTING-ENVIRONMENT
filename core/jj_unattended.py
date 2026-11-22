@@ -193,7 +193,7 @@ def rearm_after_script_recovery(meta,field,*,unlocked=False,visible_dialogue=Fal
     meta.pop("review",None)
     for key in ("event_goal","native_route","native_revisit",
                 "field_strategic_referral","native_vision_budget",
-                "exceptional_vision","bootstrap","stale_script_field"):
+                "exceptional_vision","bootstrap"):
         meta.pop(key,None)
     # Existing world and tile observations remain authoritative; the
     # story interaction can change available exits without changing the map.
