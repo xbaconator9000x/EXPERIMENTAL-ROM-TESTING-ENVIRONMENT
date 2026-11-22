@@ -278,7 +278,7 @@ class Explorer:
                 or not isinstance(proposal,dict) or proposal.get("review")):
             return None
         f,_,occupied=candidate
-        events,_=info
+        events,facing=info
         actions=proposal.get("actions",[])
         if not isinstance(actions,list) or len(actions)!=1:return None
         action=actions[0]
@@ -295,8 +295,13 @@ class Explorer:
                     "objective":"Native-validated last-resort visual step",
                     "actions":[{"button":key,"frames":frames}],"review":False}
         if key=="A":
-            neighbors={(f.pos[0]+dx,f.pos[1]+dy) for dx,dy in DIR.values()}
-            if not any((e.get("x"),e.get("y")) in neighbors
+            # An adjacent NPC is not enough: A acts in the current facing
+            # direction. If facing is unreadable, defer to native 'face'
+            # then 'interact' rather than trusting a visual guess.
+            if facing not in DIR:return None
+            dx,dy=DIR[facing]
+            ahead=(f.pos[0]+dx,f.pos[1]+dy)
+            if not any((e.get("x"),e.get("y"))==ahead
                        and e.get("kind") in ("npc","bg")
                        for e in events if isinstance(e,dict)):return None
             return {"scene":"native_guarded_visual",

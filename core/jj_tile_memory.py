@@ -78,6 +78,21 @@ def probe_frames(meta,map_id,destination):
     return LONGER_PROBE_FRAMES if failures(meta,map_id,destination)==1 else 1
 
 
+def confirm_native_position(meta,map_id,pos,*,verified):
+    """A verified player location overrides provisional bump evidence.
+
+    In particular, a scripted warp may already have been entered by the
+    player or an operator; stale two-bump memory must never prevent the
+    native planner from stepping off and back onto that same trigger.
+    Screenshots alone cannot authorize this correction.
+    """
+    if not verified:return False
+    node=_map(meta,map_id)
+    key=_tile(pos)
+    if node is None or key is None:return False
+    return node["attempts"].pop(key,None) is not None
+
+
 def record(meta,before,after,command,*,verified_before,verified_after):
     """Return 'retry', 'blocked', 'moved' or None; never create evidence on a lock.
 

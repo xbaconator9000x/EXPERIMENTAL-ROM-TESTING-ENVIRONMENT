@@ -3,7 +3,7 @@ import unittest
 
 from core.firered import Field
 from core.jj_tile_memory import (
-    blocked_tiles, diagnostics, failures, probe_frames, record,
+    blocked_tiles, confirm_native_position, diagnostics, failures, probe_frames, record,
     refresh_on_verified_arrival,
 )
 
@@ -27,6 +27,22 @@ class NativeTileMemoryTests(unittest.TestCase):
         self.assertEqual(blocked_tiles(meta,(1,2)),{(3,2)})
         self.assertEqual(diagnostics(meta)["blocked_tiles"],1)
         self.assertEqual(json.loads(json.dumps(meta))["tile_observations"],meta["tile_observations"])
+
+    def test_authoritative_player_position_clears_stale_blocked_warp(self):
+        meta={};start=field((2,2),(43,1))
+        command=("move",(3,2))
+        for _ in range(2):
+            record(meta,start,start,command,
+                   verified_before=True,verified_after=True)
+        self.assertEqual(blocked_tiles(meta,(43,1)),{(3,2)})
+        # A screenshot or an unverified script/fade cannot clear collision.
+        self.assertFalse(confirm_native_position(meta,(43,1),(3,2),verified=False))
+        self.assertEqual(blocked_tiles(meta,(43,1)),{(3,2)})
+        # Once a fully corroborated native field reports the player there,
+        # the provisional wall is disproved, so a door reentry is possible.
+        self.assertTrue(confirm_native_position(meta,(43,1),(3,2),verified=True))
+        self.assertEqual(blocked_tiles(meta,(43,1)),set())
+        self.assertFalse(confirm_native_position(meta,(43,1),(3,2),verified=True))
 
     def test_arrival_overrides_old_observed_collision(self):
         meta={};s=field();command=("move",(3,2))

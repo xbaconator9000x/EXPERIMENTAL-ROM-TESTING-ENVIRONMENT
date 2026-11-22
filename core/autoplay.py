@@ -28,7 +28,7 @@ from core.gen3_profiles import open_profile, VanillaField, VanillaBattle
 from core.native_acceptance import Acceptance
 from core.jj_explore import Explorer
 from core.jj_world_model import observe as world_observe, task as world_task, summary as world_summary, complete as world_complete
-from core.jj_tile_memory import refresh_on_verified_arrival
+from core.jj_tile_memory import refresh_on_verified_arrival, confirm_native_position
 from core.jj_menus import MenuDriver,intent_from_battle
 from core.jj_runtime import NATIVE, animation_wait, record_field, count_decision, recovery_allowed
 from core.jj_connections import observe_arrival
@@ -331,9 +331,14 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 # verified field location after the interruption.
                 explorer.interrupt(meta,"battle")
                 meta.pop("native_route",None)
+            # A native-verified occupied tile cannot simultaneously be
+            # treated as a wall just because a past short turn failed.
+            field_verified=adapter.verified_field(field_before,meta)
+            if sha in JJ_RELEASES and field_verified and field_before:
+                confirm_native_position(meta,field_before[0].map_id,
+                                        field_before[0].pos,verified=True)
             events=explorer.inspect(field_before,meta)
             # Only actual native movement proof can update the world graph.
-            field_verified=adapter.verified_field(field_before,meta)
             if sha in JJ_RELEASES and field_verified:
                 world_observe(meta,field_before,events[0] if events else None,
                               verified=True,decision=meta["decisions"])
@@ -816,6 +821,8 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 observe_action_batch(meta,rgb,after,field_ok=field_ok,dialogue=(ordinary_dialogue(after) is not None))
             after_verified=adapter.verified_field(field_after,meta)
             if sha in JJ_RELEASES and after_verified and field_after:
+                confirm_native_position(meta,field_after[0].map_id,
+                                        field_after[0].pos,verified=True)
                 prior_field=meta.get("last_native_field")
                 if isinstance(prior_field,dict):
                     refresh_on_verified_arrival(meta,prior_field.get("map"),

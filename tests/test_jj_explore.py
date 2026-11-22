@@ -172,7 +172,10 @@ class TestExplorer(unittest.TestCase):
         self.assertEqual(decision["actions"],[{"button":"DOWN","frames":16}])
         self.assertEqual(decision["scene"],"native_guarded_visual")
         self.assertIsNone(ex.guarded_visual(c,meta,([],None),proposal("A")))
-        self.assertEqual(ex.guarded_visual(c,meta,info,proposal("A"))["actions"],
+        # Without native facing, A is unsafe despite an adjacent NPC.
+        self.assertIsNone(ex.guarded_visual(c,meta,info,proposal("A")))
+        self.assertIsNone(ex.guarded_visual(c,meta,(info[0],"UP"),proposal("A")))
+        self.assertEqual(ex.guarded_visual(c,meta,(info[0],"RIGHT"),proposal("A"))["actions"],
                          [{"button":"A","frames":5}])
 
     def test_native_event_probe_distinguishes_unverified_rejected_and_readable(self):
