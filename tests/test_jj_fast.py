@@ -119,10 +119,10 @@ class FastTests(unittest.TestCase):
                   {"decision":978,"source":"native_explore","field_after":{"map":[43,1],"pos":[4,5]}},
                   {"decision":980,"source":"native_explore","field_after":{"map":[43,1],"pos":[4,3]}}]}
         def candidate(m,live):
-            a=Adapter("unused","wrong");a.admitted=True;a.size=0x10000;a.attach(live)
+            a=Adapter("unused","wrong");a.admitted=True;a.size=0x10000;a.attach(live,m)
             with patch("core.jj_fast.Reader") as reader:
                 reader.return_value.snapshot.return_value=field
-                answer=a.candidate(bytes(115200),m)
+                answer=a.candidate(bytes(115200))
                 return a,answer,reader
         a,out,reader=candidate(None,FakeLive())
         self.assertIsNone(out)
@@ -143,9 +143,9 @@ class FastTests(unittest.TestCase):
         self.assertIsNone(candidate(meta,FakeLive(frozen=True))[1])
         with patch("core.jj_fast.Reader") as reader:
             reader.return_value.snapshot.return_value=Field((43,2),(3,6),12,12,(0,)*144)
-            self.assertIsNone(a.candidate(bytes(115200),meta))
+            self.assertIsNone(a.candidate(bytes(115200)))
         # Visually confirmed dialogue always wins over stale-script recovery.
-        self.assertIsNone(a.candidate(frame(),meta))
+        self.assertIsNone(a.candidate(frame()))
 
     def test_native_party_checksum(self):
         p=party();m=decode_party(p)[0];self.assertEqual((m["species_id"],m["hp"],m["moves"][0]),(19,18,33))

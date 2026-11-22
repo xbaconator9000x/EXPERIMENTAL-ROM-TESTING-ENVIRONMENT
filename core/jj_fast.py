@@ -149,9 +149,11 @@ class Adapter:
                 i=data.find(needle,i+1,min(len(data),0x160000))
             return False
         self.admitted=all(anchored(x) for x in (SAVE_PTR,MAP_HEADER,VMAP,MAIN,OBJECTS,SCRIPT,FADE,PARTY))
-    def attach(self,live):
+    def attach(self,live,meta=None):
         self.live=live
-    def candidate(self,rgb,meta=None):
+        self.meta=meta
+    def candidate(self,rgb):
+        meta=getattr(self,"meta",None)
         self.lock_probe=None
         if not self.admitted:return None
         if ordinary_dialogue(rgb):self.reason="DIALOGUE_ACTIVE";return None
