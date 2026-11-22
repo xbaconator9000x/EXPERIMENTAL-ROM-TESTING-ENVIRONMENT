@@ -5,6 +5,14 @@ from core.review_recovery import LADDER,SPACING_SECONDS,recover,changed
 def frame(text=False,field=False):
     b=bytearray(bytes((0,0,0))*38400)
     if text:
+        # Source-grounded field dialogue geometry: full-width orange frame,
+        # white interior, dark lower border and visible red glyphs.
+        for y in range(114,119):
+            b[(y*240+1)*3:(y*240+239)*3]=bytes((206,82,0))*238
+        for y in range(119,153):
+            b[(y*240+1)*3:(y*240+239)*3]=bytes((255,255,255))*238
+        for y in range(153,159):
+            b[(y*240+1)*3:(y*240+239)*3]=bytes((15,15,15))*238
         for y in range(126,133):
             b[(y*240+22)*3:(y*240+86)*3]=bytes((220,15,15))*64
     if field:
@@ -101,5 +109,12 @@ class RecoveryTests(unittest.TestCase):
         self.assertFalse(changed(a,bytes(b)))
         self.assertTrue(changed(a,frame(text=True)))
         self.assertTrue(changed(a,frame(field=True)))
+        # At the bottom doorway the player sprite overlaps the ordinary
+        # dialogue region. Turning/walking there is not a new story page.
+        c=bytearray(a)
+        for y in range(122,150):
+            c[(y*240+109)*3:(y*240+124)*3]=bytes((195,85,60))*15
+        self.assertFalse(changed(a,bytes(c)))
+        self.assertFalse(changed(bytes(c),a))
 
 if __name__=="__main__":unittest.main()
