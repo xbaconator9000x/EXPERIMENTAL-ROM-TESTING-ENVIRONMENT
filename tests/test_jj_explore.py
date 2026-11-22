@@ -26,7 +26,7 @@ class TestExplorer(unittest.TestCase):
         self.assertEqual(result[0],[npc,warp])
         probe=meta["native_event_probe"]
         self.assertEqual(probe["status"],"EVENTS_READ")
-        self.assertEqual(probe["counts"],{"npc":1,"warp":1,"bg":0,"connection":0})
+        self.assertEqual(probe["counts"],{"npc":1,"warp":1,"bg":0,"coord":0,"connection":0})
         self.assertEqual(probe["reachable"],2)
         self.assertEqual(probe["attempted"],0)
         self.assertEqual(probe["event_positions"],[{"kind":"npc","x":3,"y":1},{"kind":"warp","x":4,"y":4}])
@@ -76,6 +76,50 @@ class TestExplorer(unittest.TestCase):
             result,facing=event_targets(live,len(buffer),f,header,0x02000000)
         self.assertEqual(result,[{"kind":"bg","x":2,"y":1,"id":0,"bg_kind":1}])
         buffer[0x103]=65
+        with self.assertRaises(ValueError):
+            event_targets(live,len(buffer),f,header,0x02000000)
+
+    def test_coordinate_trigger_is_walk_on_not_press_a(self):
+        f=Field((1,2),(1,1),5,5,(0,)*25)
+        coord={"kind":"coord","x":2,"y":1,"id":0,"trigger":1,"index":2}
+        c=(f,0x08001235,set())
+        ex=Explorer(MockAdapter());meta={"native_party_count":1}
+        info=([coord],"RIGHT")
+        self.assertFalse(ex.request(c,meta,info,"interact"))
+        self.assertTrue(ex.request(c,meta,info,"explore"))
+        choice,command=ex.next(c,meta,info)
+        self.assertEqual(choice["actions"],[{"button":"RIGHT","frames":1}])
+        self.assertEqual(command[0],"move")
+        at=Field(f.map_id,(2,1),5,5,f.tiles)
+        ex.finish(meta,c,(at,c[1],set()),command)
+        self.assertIsNone(ex.next((at,c[1],set()),meta,info))
+
+    def test_coordinate_event_reader_uses_16_byte_entries_and_validates_bounds(self):
+        from core.jj_explore import event_targets
+        from unittest.mock import patch
+        import struct
+        f=Field((1,2),(1,1),5,5,(0,)*25)
+        base=0x08000000
+        header=base+0x20
+        events=base+0x100
+        coords=base+0x240
+        buffer=bytearray(0x300)
+        struct.pack_into("<I",buffer,0x24,events)
+        buffer[0x102]=1
+        struct.pack_into("<I",buffer,0x10c,coords)
+        struct.pack_into("<hhBBHH2xI",buffer,0x240,2,1,0,0,3,4,base+0x280)
+        class Live:
+            def integer(self,addr,n):return int.from_bytes(self.read(addr,n),"little")
+            def read(self,addr,n):
+                if addr==0x02000000:return bytes(576)
+                if addr>=base and addr+n<=base+len(buffer):
+                    return bytes(buffer[addr-base:addr-base+n])
+                raise ValueError("out of range")
+        live=Live()
+        with patch("core.jj_explore.crossings",return_value=[]):
+            result,_=event_targets(live,len(buffer),f,header,0x02000000)
+        self.assertEqual(result,[{"kind":"coord","x":2,"y":1,"id":0,"trigger":3,"index":4}])
+        buffer[0x102]=65
         with self.assertRaises(ValueError):
             event_targets(live,len(buffer),f,header,0x02000000)
 
