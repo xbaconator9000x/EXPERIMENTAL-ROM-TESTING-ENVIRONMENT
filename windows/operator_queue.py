@@ -107,6 +107,7 @@ class ControlPoller:
         self.remote.request("/issues/"+str(self.issue)+"/comments",
                             {"body":"ROM-CONTROL-READY v1\n"+json.dumps(body,separators=(",",":"))})
         self.announced=True
+        print("Operator control READY on private playthrough issue #"+str(self.issue),flush=True)
 
     def poll_once(self):
         self.remote.verify() # includes mandatory private repository identity
@@ -153,8 +154,11 @@ class ControlPoller:
     def run(self):
         while not self.stop.is_set():
             try:self.poll_once();self.poll_failures=0
-            except (OSError,ValueError,KeyError,TypeError):
+            except (OSError,ValueError,KeyError,TypeError) as exc:
                 self.poll_failures=min(self.poll_failures+1,6)
+                if self.poll_failures in (1,4):
+                    # Never log GitHub response bodies or token-bearing URLs.
+                    print("Operator polling retry: "+type(exc).__name__,flush=True)
             self.stop.wait(min(60,5*(2**min(self.poll_failures,3))))
 
     def __enter__(self):

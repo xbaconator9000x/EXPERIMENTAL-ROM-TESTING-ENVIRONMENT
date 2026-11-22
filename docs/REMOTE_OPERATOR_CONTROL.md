@@ -62,3 +62,21 @@ still need a local host restart. On Windows launch, Ctrl+C cleanly stops the
 player. Pause/resume only control the live emulator, not the independent
 test runner. Do not expose this token or post ROM, save, or native checkpoint
 bytes in GitHub comments.
+
+## Diagnosing a parked previous-generation session
+After installation, the PowerShell player must report
+`Operator control READY on private playthrough issue #19` and the
+private play issue must contain `ROM-CONTROL-READY v1`.
+`Continuous player polling private queue` alone only confirms that the
+outer queue loop launched: it does not establish that the ROM checkpoint
+was admitted. An existing `NEEDS_REVIEW` terminal is now admitted into
+operator hold without requiring a single-use upgrade marker or any old
+`ROM-GUIDE v1` comment. This does not automatically press buttons: a
+private `resume` or bounded `input` command must release the hold.
+If checkpoint identity validation fails, PowerShell prints
+`checkpoint not admitted` and retains every checkpoint unchanged.
+If operator comments cannot be fetched, PowerShell prints
+`Operator polling retry` with the exception class (not secrets).
+Large screenshot-heavy issues are paginated at 20 comments per page to
+stay below the GitHub response limit. Never clear the local controller
+folder or delete the saved state to resolve a readiness failure.
