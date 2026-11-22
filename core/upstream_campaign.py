@@ -48,23 +48,22 @@ def choose_skill(model,goal,state,history,rgb):
             # the immediately preceding action. Alternating two rejected
             # skills must not evade the replay guard.
             current_screen=digest(rgb)
-            if any(h.get("result","").startswith("SKILL_STOPPED:")
-                   and h.get("before")==current_screen
-                   and h.get("skill")==name
-                   and h.get("args",{})==args for h in recent):
-                raise ValueError("previously stopped skill at unchanged screen")
-            # Read-only or apparently successful skills can also loop forever
-            # without changing the scene. Quarantine an identical action after
-            # two consecutive unchanged outcomes at this exact screen; do not
-            # count a successful transition or a different observed screen.
-            # A revisited screen is a new gameplay epoch after any witnessed
-            # transition. Old no-progress attempts must not quarantine a
-            # valid skill forever when the player returns to a menu or room.
+            # A rejected skill is quarantined only during the current
+            # uninterrupted scene epoch. Returning to the same RGB screen
+            # after a witnessed transition is a fresh opportunity.
+            current_screen=digest(rgb)
             epoch=[]
             for h in reversed(recent):
                 if h.get("before")!=current_screen or h.get("after")!=current_screen:
                     break
                 epoch.append(h)
+            if any(h.get("result","").startswith("SKILL_STOPPED:")
+                   and h.get("skill")==name
+                   and h.get("args",{})==args for h in epoch):
+                raise ValueError("previously stopped skill in current scene epoch")
+            # A successful skill can still leave the screen unchanged.
+            # Two identical no-progress outcomes in the same epoch are enough
+            # to demand a different action.
             unchanged_matches=[h for h in epoch if
                 h.get("skill")==name and h.get("args",{})==args]
             if len(unchanged_matches)>=2:
