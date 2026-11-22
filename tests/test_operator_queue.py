@@ -31,7 +31,7 @@ class QueueTests(unittest.TestCase):
                     return {"state":"open","comments":len(self.rows)}
                 if "/comments?" in path:
                     import re
-                    page=int(re.search(r"page=(\d+)",path).group(1))
+                    page=int(re.search(r"(?:[?&])page=(\d+)",path).group(1))
                     count=int(re.search(r"per_page=(\d+)",path).group(1))
                     self.max_page_size=max(getattr(self,"max_page_size",0),count)
                     if count>20:
