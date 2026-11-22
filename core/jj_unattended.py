@@ -176,6 +176,7 @@ def diagnostic(adapter,battles,menus,field,meta):
             "battle_callbacks":len(battles.callbacks),"battle_witnesses":len(meta.get("battle_proof",[])),
             "catalog":battles.catalog is not None,"inventory":battles.field_inventory,
             "bag_candidate":menus.bag_ok,"party_candidate":menus.party_ok,
+            "event_probe":meta.get("native_event_probe"),
             "world":world_summary(meta),"tile_learning":tile_diagnostics(meta)}
 
 
