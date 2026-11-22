@@ -40,11 +40,13 @@ def event_targets(live,rom_size,field,map_header=MAP_HEADER,object_base=OBJECTS,
 def event_key(field,event):
     return ":".join(map(str,(*field.map_id,event["kind"],event["id"],event["x"],event["y"])))
 
-def options(field,occupied,events,attempted,blocked=()):
+def options(field,occupied,events,attempted,blocked=(),avoid_warps=None):
     """Rank reachable untried events, staying off unrelated warp tiles."""
     candidates=[]
     blocked=set(blocked)
-    warps={(e["x"],e["y"]) for e in events if e["kind"]=="warp"}
+    # All original warp tiles remain hazardous even when the requested
+    # task filters the candidates down to NPCs or route connections.
+    warps={(e["x"],e["y"]) for e in (events if avoid_warps is None else avoid_warps) if e["kind"]=="warp"}
     for e in events:
         key=event_key(field,e)
         if key in attempted:continue
@@ -80,9 +82,10 @@ class Explorer:
     def request(self,candidate,meta,info,task):
         if not info or task not in ("explore","interact","exit"):return False
         f,_,occupied=candidate;events,_=info
+        all_events=events
         if task=="interact":events=[e for e in events if e["kind"]=="npc"]
         elif task=="exit":events=[e for e in events if e["kind"] in ("warp","connection")]
-        choices=options(f,occupied,events,meta.get("event_attempts",[]),blocked_tiles(meta,f.map_id))
+        choices=options(f,occupied,events,meta.get("event_attempts",[]),blocked_tiles(meta,f.map_id),avoid_warps=all_events)
         if not choices:return False
         choices=[c for c in choices if c[5] or c[4]["kind"]!="warp"]
         if not choices:return False
