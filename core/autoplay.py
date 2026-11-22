@@ -37,7 +37,7 @@ from core.jj_tile_memory import refresh_on_verified_arrival, confirm_native_posi
 from core.jj_menus import MenuDriver,intent_from_battle
 from core.jj_runtime import NATIVE, animation_wait, record_field, count_decision, recovery_allowed
 from core.jj_connections import observe_arrival
-from core.jj_unattended import recovery, oscillation, field_hint, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id, bootstrap, vision_stall, script_settle, exceptional_vision, field_strategic_referral, rearm_after_script_recovery, legacy_script_resume_candidate
+from core.jj_unattended import recovery, oscillation, field_hint, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id, bootstrap, vision_stall, script_settle, exceptional_vision, field_strategic_referral, rearm_after_script_recovery, legacy_script_resume_candidate, persistent_native_field_cycle
 
 BUTTONS={"A":1,"B":2,"SELECT":4,"START":8,"RIGHT":16,"LEFT":32,"UP":64,"DOWN":128,"R":256,"L":512,"WAIT":0}
 SCHEMA={"type":"object","additionalProperties":False,"required":["scene","objective","actions","review"],"properties":{
@@ -1136,7 +1136,17 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             with (folder/"actions.jsonl").open("a",encoding="utf-8") as log:log.write(json.dumps(entry,ensure_ascii=True)+"\n")
             if meta["decisions"]==1 or (meta["decisions"]%5==0 and (source not in NATIVE or time.monotonic()-last_report>=30)):
                 report("RUNNING",meta,rgb);last_report=time.monotonic()
-            if len(meta["history"])>=24 and len({h["after"] for h in meta["history"][-24:]})<=2:
+            # A recovery ladder can contain 24+ identical LCD hashes even
+            # though it has not made 24 *gameplay navigation* decisions.
+            # Never interpret a script/warp wait, dialogue, remote intervention,
+            # or unverified field as an exhausted native movement loop.
+            generic_cycle=(sha not in JJ_RELEASES and
+                len(meta["history"])>=24 and
+                len({h.get("after") for h in meta["history"][-24:]})<=2)
+            native_cycle=(sha in JJ_RELEASES and
+                adapter.verified_field(field_after,meta) and
+                persistent_native_field_cycle(meta["history"],field_after))
+            if generic_cycle or native_cycle:
                 # Field cycles get a bounded set of distinct alternatives before
                 # a terminal review. Do not consume a recovery attempt here.
                 if sha in JJ_RELEASES and recovery(copy.deepcopy(meta),digest(rgb),rgb,field_after,adapter.verified_field(field_after,meta)) is not None:
