@@ -97,6 +97,33 @@ class FastTests(unittest.TestCase):
         # A real secondary choice panel must still inhibit blind A.
         self.assertIsNone(ordinary_dialogue(frame(choice=True)))
 
+    def test_red_glyph_script_box_with_black_edge_on_black_room(self):
+        # Synthetic layout matching the observed failure class at decision
+        # 1080/1085: red lettering, white window, black lower frame and black
+        # surrounding void. No proprietary screenshot or ROM bytes.
+        raw=bytearray(bytes((0,0,0))*38400)
+        def rect(x,y,w,h,color):
+            for row in range(y,y+h):
+                raw[(row*240+x)*3:(row*240+x+w)*3]=bytes(color)*w
+        rect(5,115,230,3,(206,82,0))
+        rect(5,118,230,35,(255,255,255))
+        rect(5,153,230,7,(0,0,0))
+        rect(18,127,80,3,(210,45,10))
+        rect(18,141,60,3,(210,45,10))
+        observed=bytes(raw)
+        self.assertIsNotNone(ordinary_dialogue(observed))
+        self.assertEqual(quick_dialogue(observed,{"history":[]})[0]["actions"],
+                         [{"button":"A","frames":5}])
+        # The same window without any text must remain ineligible.
+        rect(18,127,80,3,(255,255,255))
+        rect(18,141,60,3,(255,255,255))
+        self.assertIsNone(ordinary_dialogue(bytes(raw)))
+        # Ordinary YES/NO choice windows must never be auto-confirmed.
+        rect(18,127,80,3,(210,45,10))
+        rect(163,42,65,4,(206,82,0))
+        rect(163,46,65,27,(255,255,255))
+        self.assertIsNone(ordinary_dialogue(bytes(raw)))
+
     def test_native_lock_flags_diagnose_only_and_do_not_bypass(self):
         class FakeLive:
             def __init__(self,script,fade):self.script,self.fade=script,fade
