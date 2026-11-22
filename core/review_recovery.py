@@ -5,6 +5,7 @@ never reads or uploads ROM/save bytes. The host supplies its ordinary native
 controller, verified screenshot and checkpoint callbacks.
 """
 import hashlib
+from core.jj_fast import ordinary_dialogue
 
 SPACING_SECONDS = 10
 LADDER = (("A",10),("B",10),("UP",3),("DOWN",3),("LEFT",3),("RIGHT",3))
@@ -20,7 +21,12 @@ def text_region(rgb):
 def changed(before,after):
     """Candidate UI/field change, never acceptance proof by itself."""
     if len(before)!=115200 or len(after)!=115200:return False
-    if text_region(before)!=text_region(after):
+    # The lower-screen character sprite can walk across the usual text-box
+    # area (especially on a doorway). Pixel movement there is NOT dialogue
+    # progress unless a full-width field textbox was really present.
+    before_page=ordinary_dialogue(before)
+    after_page=ordinary_dialogue(after)
+    if (before_page is not None or after_page is not None) and before_page!=after_page:
         return True
     # Animation of a single sprite is not verified progress. The display must
     # change extensively outside the text region for an unclassified scene.
