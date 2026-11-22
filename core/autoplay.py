@@ -107,7 +107,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 class OllamaVision:
     def __init__(self,model="qwen3-vl:4b-instruct",timeout=180,fallback="qwen3-vl:2b-instruct"):
         if not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,100}",model):raise ValueError("Invalid local model")
-        self.structured=None;self.objective_state=None;self.navigation_hint=None;self.party_reference=None;self.battle_reference=None;self.model=model;self.timeout=timeout;self.fallback=fallback;self.last_source="vision";self.failures=0
+        self.structured=None;self.objective_state=None;self.navigation_hint=None;self.party_reference=None;self.battle_reference=None;self.world_reference=None;self.model=model;self.timeout=timeout;self.fallback=fallback;self.last_source="vision";self.failures=0
         self.opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect)
     def _decide(self,rgb,goal,history,blocked,memory,model,rich):
         system=("You are a player using ordinary Game Boy Advance controller inputs, not code. "
@@ -123,7 +123,7 @@ class OllamaVision:
         # (possibly hallucinated) scene classification.
         loop_hint={"avoid_return_direction":loop["avoid_button"],
                    "repetitions":loop["repetitions"]} if loop else None
-        context=json.dumps({"goal":goal,"recent_history":[{k:h[k] for k in ("scene","objective","actions") if k in h} for h in history[-6:]],"avoid_on_this_screen":blocked[-6:],"two_screen_loop":loop_hint,"navigation_lessons":self.navigation_hint,"last_verified_party":self.party_reference,"current_verified_battle":self.battle_reference,"visible_full_width_dialogue":ordinary_dialogue(rgb) is not None,"quest_notebook":memory_context(memory or {}),"native_field":self.structured,"objective_state":self.objective_state},ensure_ascii=True)
+        context=json.dumps({"goal":goal,"recent_history":[{k:h[k] for k in ("scene","objective","actions") if k in h} for h in history[-6:]],"avoid_on_this_screen":blocked[-6:],"two_screen_loop":loop_hint,"navigation_lessons":self.navigation_hint,"last_verified_party":self.party_reference,"current_verified_battle":self.battle_reference,"visited_world":self.world_reference,"visible_full_width_dialogue":ordinary_dialogue(rgb) is not None,"quest_notebook":memory_context(memory or {}),"native_field":self.structured,"objective_state":self.objective_state},ensure_ascii=True)
         payload={"model":model,"stream":False,"format":SCHEMA if rich else COMPACT_SCHEMA,"keep_alive":"10m" if model==self.model else "0s","options":{"temperature":0.1,"num_predict":450 if rich else 240,"num_ctx":4096},
                  "messages":[{"role":"system","content":system},{"role":"user","content":context,"images":[base64.b64encode(png(rgb,3)).decode("ascii")]}]}
         if not rich:
@@ -341,6 +341,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if isinstance(model,OllamaVision):
                 model.objective_state=meta.get("objective_state")
                 model.party_reference=knowledge_context(meta)
+                model.world_reference=world_summary(meta)
                 model.battle_reference=(meta.get("battle_knowledge",{}).get("current")
                     if battle_before and battle_before.get("callback") in meta.get("battle_proof",[])
                     else None)
