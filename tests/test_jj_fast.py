@@ -46,6 +46,27 @@ class FastTests(unittest.TestCase):
         h=[{"source":"fast_dialogue","dialogue_page":ordinary_dialogue(frame(navy=True)), "before":"same","after":"same"}]
         self.assertIsNone(quick_dialogue(frame(navy=True),{"history":h}))
         self.assertIsNotNone(quick_dialogue(frame(navy=True),{"history":[{"source":"vision_compact"}]}))
+    def test_actual_orange_border_and_dense_second_line(self):
+        # Synthetic recreation of the user's v1.03.3 dialogue geometry:
+        # exactly one full-width orange (206,82,0) border scanline, white
+        # text body and densely printed second line. No ROM/screenshot data.
+        raw=bytearray(bytes((4,8,12))*38400)
+        def rect(x,y,w,h,color):
+            for row in range(y,y+h):
+                raw[(row*240+x)*3:(row*240+x+w)*3]=bytes(color)*w
+        rect(7,116,225,1,(206,82,0))
+        rect(7,119,225,34,(255,255,255))
+        rect(7,153,225,6,(66,66,82))
+        rect(20,125,15,4,(99,99,99))
+        rect(22,146,120,3,(99,99,99))
+        rgb=bytes(raw)
+        self.assertIsNotNone(ordinary_dialogue(rgb))
+        self.assertIsNotNone(quick_dialogue(rgb,{"history":[]}))
+        # A one-line orange horizontal decoration is insufficient:
+        # safety also requires the full-width lower edge and text.
+        rect(7,153,225,6,(4,8,12))
+        self.assertIsNone(ordinary_dialogue(bytes(raw)))
+
     def test_native_party_checksum(self):
         p=party();m=decode_party(p)[0];self.assertEqual((m["species_id"],m["hp"],m["moves"][0]),(19,18,33))
         p[32]^=4
