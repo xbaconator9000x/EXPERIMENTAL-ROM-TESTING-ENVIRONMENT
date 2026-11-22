@@ -64,6 +64,19 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(consulted,[0])
         self.assertEqual(meta["review_recovery"]["visual_consults"],1)
 
+    def test_native_position_witness_stops_ladder_without_pixel_change(self):
+        calls=[]
+        flags={"moved":False}
+        def press(button,n):
+            calls.append(button)
+            flags["moved"]=len(calls)==2
+            return frame()
+        result,screen=recover({},frame(),press=press,delay=lambda n:True,
+                              permit=lambda rgb,key:True,
+                              witness=lambda:flags["moved"])
+        self.assertEqual(result,"PROGRESS")
+        self.assertEqual(calls,["A","A"])
+
     def test_unsafe_choice_skips_blind_presses(self):
         consulted=[]
         def visual(rgb,i):
