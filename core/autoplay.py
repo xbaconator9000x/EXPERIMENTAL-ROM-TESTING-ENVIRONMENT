@@ -342,7 +342,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             # One read-only ROM-hack map probe per independently witnessed
             # map. Never upload memory, script bytes or pointer addresses.
             if (sha in JJ_RELEASES and isinstance(adapter,Adapter) and
-                    adapter.admitted and adapter.size>0 and field_verified and field_before):
+                    adapter.admitted and getattr(adapter,"size",0)>0 and field_verified and field_before):
                 map_key=":".join(map(str,field_before[0].map_id))
                 audits=meta.get("rom_hack_map_audits")
                 if not isinstance(audits,dict):
