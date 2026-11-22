@@ -29,6 +29,8 @@ from core.native_acceptance import Acceptance
 from core.jj_explore import Explorer, native_event_settle
 from core.jj_compat import safe_map_audit
 from core.jj_text import decide as native_text_decide
+from core.jj_text import floating_choice
+from core.review_recovery import recover as bounded_review_recovery
 from core.jj_event_data import safe_event_data, read_event_data, transition_counts
 from core.jj_world_model import observe as world_observe, task as world_task, summary as world_summary, complete as world_complete
 from core.jj_tile_memory import refresh_on_verified_arrival, confirm_native_position
@@ -307,6 +309,110 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             else:inst.step(0,120)
             return inst
         except BaseException:inst.close();raise
+
+    def attempt_auto_review_recovery():
+        """Use bounded native inputs before a manual NEEDS_REVIEW hold."""
+        nonlocal live,meta,rgb,acceptance
+        if sha not in JJ_RELEASES or not isinstance(adapter,Adapter) or not adapter.admitted:
+            return False
+        # Create an immutable pre-recovery generation on the owner-controlled
+        # host. Do not mutate the ROM, inject state, or transmit save bytes.
+        screen=digest(rgb)
+        before=folder/("review-before-"+screen[:16]+".bin")
+        if not before.exists():
+            save_progress(before,identity,copy.deepcopy(meta),live.save_state(),rgb)
+        start_rgb=rgb
+
+        def eligible(frame,button):
+            if floating_choice(frame):return False
+            # Never guess around a live battle/menu/choice. Let the visual
+            # fallback classify rather than press blindly.
+            try:
+                if battles.snapshot(live) is not None or menus.snapshot(live,meta) is not None:
+                    return False
+            except (ValueError,LiveError,KeyError,TypeError):return False
+            if button in ("UP","DOWN","LEFT","RIGHT") and ordinary_dialogue(frame) is not None:
+                return False
+            return button in BUTTONS
+
+        def press(button,frames):
+            nonlocal rgb
+            live.step(BUTTONS[button],frames)
+            live.step(0,3)
+            live.step(0,48)
+            rgb=live.rgb()
+            meta["frames"]=meta.get("frames",0)+frames+51
+            meta["decisions"]=meta.get("decisions",0)+1
+            entry={"decision":meta["decisions"],"scene":"review_recovery",
+                   "objective":"Bounded unattended review recovery",
+                   "actions":[{"button":button,"frames":frames}],
+                   "source":"review_recovery","before":screen,
+                   "after":digest(rgb)}
+            meta["history"]=(meta.get("history",[])+[entry])[-80:]
+            save_progress(path,identity,meta,live.save_state(),rgb)
+            return rgb
+
+        def delay(seconds):
+            nonlocal live,meta,rgb
+            until=time.monotonic()+seconds
+            while time.monotonic()<until:
+                if should_stop():return False
+                if control:
+                    live,meta,rgb,changed=control.drain(live,meta,rgb)
+                    if changed or control.paused or control.review:return False
+                time.sleep(min(.25,max(0,until-time.monotonic())))
+            return not should_stop()
+
+        def visual(frame,index):
+            # Strict last-resort visual consultation: at most two attempts,
+            # each offering ONE ordinary short GBA input, no file operations.
+            if getattr(model,"native_only",False) or not isinstance(model,OllamaVision):
+                return None
+            if should_stop():return None
+            try:
+                context=(meta.get("history",[])[-6:]+[{
+                    "scene":"review_recovery",
+                    "objective":"Deterministic A/B/D-pad recovery exhausted. "
+                                "Inspect the current screen and propose one safe "
+                                "short button, or review if a choice is ambiguous.",
+                    "actions":[]}])
+                proposal=model._decide(frame,goal,context,[],meta.get("quest_memory",{}),
+                                       model.model,False)
+                proposal=parse_decision(json.dumps(proposal))
+                if proposal["review"] or len(proposal["actions"])!=1:return None
+                action=proposal["actions"][0]
+                if action["button"] not in ("A","B","UP","DOWN","LEFT","RIGHT","WAIT"):
+                    return None
+                return action["button"],min(action["frames"],24)
+            except (ValueError,KeyError,OSError,TimeoutError):
+                return None
+
+        def progress(phase,state):
+            if phase in ("A","VISUAL"):
+                meta["recovery_stage"]=phase
+                report("RECOVERING",meta,rgb)
+
+        try:
+            status,new_rgb=bounded_review_recovery(
+                meta,rgb,press=press,delay=delay,permit=eligible,
+                visual=visual,report=progress)
+        except (LiveError,OSError,ValueError):
+            meta.setdefault("review_recovery",{})["status"]="FAILED"
+            save_progress(path,identity,meta,live.save_state(),rgb)
+            return False
+        rgb=new_rgb
+        if status in ("PROGRESS","INTERRUPTED"):
+            if status=="PROGRESS":
+                meta.pop("review",None)
+                meta.pop("script_settle",None)
+                meta.pop("event_goal",None)
+                meta.pop("native_route",None)
+                invalidate_action_batch(meta)
+                acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
+                save_progress(path,identity,meta,live.save_state(),rgb)
+                report("RUNNING",meta,rgb)
+            return True
+        return False
     try:
         live=open_live(state if prior else None)
         if prior:acceptance.reload(meta["decisions"],rgb,live.rgb())
@@ -542,6 +648,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                         "objective":meta.get("objective_state",{}).get("task","Complete active scripted interaction"),
                         "reason":"script lock persisted without recognizable dialogue; requires verified interaction",
                         "lock_probe":adapter.lock_probe}
+                    if attempt_auto_review_recovery():continue
                     save_progress(path,identity,meta,live.save_state(),rgb)
                     report("NEEDS_REVIEW",meta,rgb)
                     if control:
@@ -591,6 +698,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                             "native_scout":meta.get("native_scout"),
                             "native_revisit":meta.get("native_revisit"),
                             "field_strategic_referral":meta.get("field_strategic_referral")}
+                        if attempt_auto_review_recovery():continue
                         save_progress(path,identity,meta,live.save_state(),rgb)
                         report("NEEDS_REVIEW",meta,rgb)
                         if control:
@@ -612,6 +720,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                                   if getattr(model,"native_only",False) else
                                   "unknown native state persists after one exceptional visual classification; no additional Qwen movement permitted"),
                         "field_reason":getattr(adapter,"reason","unknown")}
+                    if attempt_auto_review_recovery():continue
                     save_progress(path,identity,meta,live.save_state(),rgb)
                     report("NEEDS_REVIEW",meta,rgb)
                     if control:
@@ -633,6 +742,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                             "objective":meta.get("objective_state",{}).get("task","Obtain the first Pokémon"),
                             "reason":"vision stalled on starter map; native interaction/event target requires review",
                             "event_probe":meta.get("native_event_probe")}
+                        if attempt_auto_review_recovery():continue
                         save_progress(path,identity,meta,live.save_state(),rgb)
                         report("NEEDS_REVIEW",meta,rgb)
                         if control:
@@ -774,6 +884,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                                           if getattr(model,"native_only",False) else
                                           "two-screen navigation loop exhausted" if loop_exhausted else
                                           ("model review" if decision["review"] else "no untried bounded action"))}
+                if attempt_auto_review_recovery():continue
                 save_progress(path,identity,meta,live.save_state(),rgb)
                 report("NEEDS_REVIEW",meta,rgb)
                 if control:
