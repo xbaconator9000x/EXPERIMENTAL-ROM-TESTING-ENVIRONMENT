@@ -121,7 +121,17 @@ def diagnostic(adapter,battles,menus,field,meta):
 def bootstrap(meta,candidate,screen):
     """Obtain native movement witnesses in a plausible field without model
     calls for every probe. Same map/callback capped at four ordinary moves."""
-    if not candidate or not field_hint(meta.get("history",[])):return None
+    if not candidate:return None
+    history=meta.get("history",[])
+    if not field_hint(history):
+        # A ROM-verified native field is stronger evidence than repeated
+        # hallucinated 'title_screen' labels. This only permits bounded
+        # ordinary movement with Reader-validated map/player structures.
+        last=history[-3:]
+        stale_title=(len(last)==3
+                     and all(h.get("scene","").lower() in ("title_screen","title") for h in last)
+                     and any(a.get("button")=="START" for h in last for a in h.get("actions",[])))
+        if not stale_title:return None
     f,cb,occupied=candidate
     previous=meta.get("field_proof",{}).get("directions",[])
     key=str(cb)+":"+":".join(map(str,f.map_id))
