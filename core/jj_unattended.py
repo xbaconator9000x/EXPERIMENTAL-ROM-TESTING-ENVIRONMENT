@@ -20,6 +20,38 @@ def cycle(history,screen):
         if screen in screens and None not in screens and len(screens)<=2:return sorted(screens)
     return []
 
+def persistent_native_field_cycle(history,field,*,limit=24):
+    """Only completed, independently verified FIELD movement can cause a cycle hold.
+
+    A sequence of recovery-button probes, operator inputs, text-printer waits
+    or warp/script settles is not a newly failed navigation attempt. Image
+    identity alone is too weak: sprite-turns and animation can repeat while
+    legitimate field control or scripted transitions are in progress.
+    """
+    if not field or not isinstance(history,list) or len(history)<limit:return False
+    rows=history[-limit:]
+    allowed=frozenset(("native_explore","native_scout","native_route",
+                       "native_guarded_visual","field_recovery","batch_navigation"))
+    map_id=list(field[0].map_id)
+    positions=set()
+    screens=set()
+    for row in rows:
+        if not isinstance(row,dict) or row.get("source") not in allowed:return False
+        actions=row.get("actions")
+        if not isinstance(actions,list) or len(actions)!=1 or not isinstance(actions[0],dict):
+            return False
+        if actions[0].get("button") not in DIR:return False
+        after=row.get("field_after")
+        if not isinstance(after,dict) or after.get("map")!=map_id:return False
+        pos=after.get("pos")
+        if not isinstance(pos,list) or len(pos)!=2 or not all(type(v) is int for v in pos):
+            return False
+        positions.add(tuple(pos))
+        screens.add(row.get("after"))
+        if len(positions)>2 or len(screens)>2:return False
+    return None not in screens
+
+
 def oscillation(history,screen):
     """Evidence of a repeated two-screen reversal, independent of AI labels.
 
