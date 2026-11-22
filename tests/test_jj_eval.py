@@ -30,7 +30,8 @@ def baseline():
 
 
 def event(kind,decision=11,before=A,after=B,**detail):
-    row={"kind":kind,"decision":decision,"before":before,"after":after,"source":"native_explore"}
+    row={"kind":kind,"decision":decision,"before":before,"after":after,
+         "source":"native_restart" if kind=="checkpoint_reload" else "native_explore"}
     if detail:row["detail"]=detail
     return row
 
