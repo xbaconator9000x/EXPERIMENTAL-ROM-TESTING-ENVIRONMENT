@@ -4,6 +4,7 @@ import unittest
 from core.firered import Field
 from core.jj_tile_memory import (
     blocked_tiles, diagnostics, failures, probe_frames, record,
+    refresh_on_verified_arrival,
 )
 
 
@@ -60,6 +61,19 @@ class NativeTileMemoryTests(unittest.TestCase):
         self.assertIsNone(record(meta,s,s,("move",(3,2)),
                          verified_before=True,verified_after=True))
         self.assertNotIn("tile_observations",meta)
+
+    def test_reenter_map_forgets_only_dynamic_obstacles_with_native_proof(self):
+        meta={}
+        s=field((2,2),(1,2));dest=("move",(3,2))
+        for _ in range(2):
+            record(meta,s,s,dest,verified_before=True,verified_after=True)
+        self.assertEqual(blocked_tiles(meta,(1,2)),{(3,2)})
+        self.assertFalse(refresh_on_verified_arrival(meta,[3,4],[1,2],verified=False))
+        self.assertFalse(refresh_on_verified_arrival(meta,[1,2],[1,2],verified=True))
+        self.assertEqual(blocked_tiles(meta,(1,2)),{(3,2)})
+        self.assertTrue(refresh_on_verified_arrival(meta,[3,4],[1,2],verified=True))
+        self.assertEqual(blocked_tiles(meta,(1,2)),set())
+        self.assertEqual(probe_frames(meta,(1,2),(3,2)),1)
 
     def test_per_map_and_storage_bounds(self):
         meta={}
