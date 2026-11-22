@@ -58,3 +58,9 @@ It does not expose text, item/flag IDs, bytecode, pointer addresses, script
 paths, secrets or saves. Standard-looking bytecodes in a ROM hack are still
 **hypotheses**, not proof of runtime semantics, and they cannot authorize
 controller inputs without independently verified live game state.
+Branch-aware static inspection additionally follows bounded ROM-backed call,
+goto, and conditional-branch destinations. It inspects both conditional
+possibilities, never claims that either ran, and stops at variable-width,
+custom or opaque native commands. Loop detection and an eight-segment-per-
+script budget prevent stalls. Invalid branch targets are counted only; their
+addresses and raw command bytes never leave the host.

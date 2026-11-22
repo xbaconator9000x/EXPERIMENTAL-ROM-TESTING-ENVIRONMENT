@@ -88,6 +88,7 @@ class RomHackMapAuditTests(unittest.TestCase):
         self.live.rom[0x600:0x607]=bytes((0x69,0x67,0,0,0,0,0x02))
         result=self.read()
         self.assertGreaterEqual(result["script_prefixes_sampled"],1)
+        self.assertGreaterEqual(result["script_graph_segments_scanned"],1)
         self.assertGreaterEqual(result["possible_script_intents"].get("dialogue_or_wait",0),1)
         self.assertFalse(result["gameplay_compatibility_verified"])
         self.assertNotIn("0x080",str(result))

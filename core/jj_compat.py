@@ -6,7 +6,7 @@ remain on the owner-controlled Windows host.
 from core.firered import span
 from core.jj_fast import MAP_HEADER
 from core.live import LiveError
-from core.jj_script_probe import inspect_prefix
+from core.jj_script_probe import inspect_prefix,inspect_branch_graph
 
 ROM_BASE=0x08000000
 STRIDES=(24,8,16,12)
@@ -89,11 +89,16 @@ def inspect_map(live,rom_size,field,map_header=MAP_HEADER):
         else:raise ValueError("UNTERMINATED_MAP_SCRIPT_TABLE")
     prefix_status={}
     intent_counts={}
+    branch_segments=0
+    unresolved_branches=0
     for reference in refs:
         outcome=inspect_prefix(live,rom_size,reference)
+        graph=inspect_branch_graph(live,rom_size,reference,max_nodes=8)
+        branch_segments+=graph["script_segments_scanned"]
+        unresolved_branches+=graph["invalid_branch_targets"]
         key=outcome["status"]
         prefix_status[key]=prefix_status.get(key,0)+1
-        for feature in outcome["possible_intents"]:
+        for feature in graph["possible_intents"]:
             intent_counts[feature]=intent_counts.get(feature,0)+1
     return {"status":"UNCLASSIFIED_EVENT_KINDS" if unknown else "STRUCTURALLY_READABLE",
             "map":list(field.map_id),"counts":dict(zip(NAMES,counts)),
@@ -102,6 +107,8 @@ def inspect_map(live,rom_size,field,map_header=MAP_HEADER):
             "conditional_map_script_entries":conditional_map_entries,
             "script_prefixes_sampled":len(refs),
             "script_prefix_stop_reasons":prefix_status,
+            "script_graph_segments_scanned":branch_segments,
+            "invalid_script_branch_targets":unresolved_branches,
             "possible_script_intents":intent_counts,
             "unknown_event_kinds":unknown,"script_semantics_verified":False,
             "gameplay_compatibility_verified":False}

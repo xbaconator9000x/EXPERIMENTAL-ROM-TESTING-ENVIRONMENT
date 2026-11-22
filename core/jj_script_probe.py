@@ -96,3 +96,79 @@ def inspect_prefix(live,rom_size,pointer,*,max_commands=24,max_bytes=160):
             "complete_linear_prefix":status=="TERMINAL_COMMAND",
             "runtime_outcome_verified":False,
             "custom_opcode_semantics_verified":False}
+
+def inspect_branch_graph(live,rom_size,pointer,*,max_nodes=12):
+    """Follow only statically identified ROM script targets with a hard cap.
+
+    For every conditional, BOTH paths are merely candidates. We never read
+    flags, pick a live branch, execute a script, or infer that the event
+    happened. Calls' fall-through path is also a hypothesis, not a result.
+    This adds reachable-possibility coverage to the prefix reader.
+    """
+    if not (1<=max_nodes<=32):raise ValueError("INVALID_PROBE_BUDGET")
+    pending=[pointer]
+    seen=set()
+    statuses={}
+    intents=set()
+    unresolved=0
+    transfers=0
+    while pending and len(seen)<max_nodes:
+        current=pending.pop()
+        if current in seen:continue
+        if not span(current,1,ROM_BASE,ROM_BASE+rom_size):
+            unresolved+=1
+            continue
+        seen.add(current)
+        outcome=inspect_prefix(live,rom_size,current)
+        reason=outcome["status"]
+        statuses[reason]=statuses.get(reason,0)+1
+        intents.update(outcome["possible_intents"])
+        if reason!="CONTROL_TRANSFER_STOP":
+            continue
+        # Locate the transfer using the exact same conservative lengths.
+        # No bytecode interpretation proceeds beyond an unknown opcode.
+        size=min(160,ROM_BASE+rom_size-current)
+        data=live.read(current,size)
+        cursor=0
+        for _ in range(24):
+            if cursor>=len(data):break
+            opcode=data[cursor]
+            width=WIDTH.get(opcode)
+            if opcode in DYNAMIC or width is None or cursor+width>len(data):
+                break
+            if opcode in TRANSFERS:
+                transfers+=1
+                end=current+cursor+width
+                # Opcode 4/5: pointer immediately after opcode.
+                # Opcode 6/7: one comparison byte, then pointer.
+                if opcode in (0x04,0x05,0x06,0x07):
+                    target_offset=1 if opcode in (0x04,0x05) else 2
+                    target=int.from_bytes(data[cursor+target_offset:
+                                               cursor+target_offset+4],"little")
+                    if span(target,1,ROM_BASE,ROM_BASE+rom_size):
+                        pending.append(target)
+                    else:
+                        unresolved+=1
+                    # call and conditional branch may return/fall through;
+                    # unconditional goto never returns to the next opcode.
+                    if opcode!=0x05 and span(end,1,ROM_BASE,ROM_BASE+rom_size):
+                        pending.append(end)
+                elif opcode in (0x0a,0x0b):
+                    # A conditional standard-script call/jump has a possible
+                    # false branch continuing at the next instruction.
+                    if span(end,1,ROM_BASE,ROM_BASE+rom_size):
+                        pending.append(end)
+                break
+            if opcode in TERMINATORS:break
+            cursor+=width
+    return {
+        "status":"BOUNDED_GRAPH" if pending else "CANDIDATE_PATHS_EXAMINED",
+        "script_segments_scanned":len(seen),
+        "branch_transfers_seen":transfers,
+        "invalid_branch_targets":unresolved,
+        "segment_stop_reasons":statuses,
+        "possible_intents":sorted(intents),
+        "branch_conditions_resolved":False,
+        "script_semantics_verified":False,
+        "runtime_outcome_verified":False,
+    }
