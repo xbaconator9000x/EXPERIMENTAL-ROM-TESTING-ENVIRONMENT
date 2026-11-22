@@ -12,7 +12,7 @@ from core.rom_catalog import TYPES
 from core.live import LiveError
 from core.gameplay import cursor_action
 from core.upstream_battle import classic_multiplier, safe_damage_kind, catch_setup_slot
-from core.party_knowledge import capture_preference
+from core.party_knowledge import capture_preference, choose_verified_switch
 
 BATTLE_CB=0x08011101
 ACTION_CURSOR=0x02023FF8
@@ -184,17 +184,18 @@ class BattleAdapter:
             setup=catch_setup_slot(own,enemy,rows,state["disabled"])
             if setup is not None:safe=setup
         heal=health_percent(own)<=25 and healing>0
+        switch=choose_verified_switch(state["party"],own["species"],enemy,self.catalog) if health_percent(own)<=15 else None
         throw=capture and (health_percent(enemy)<=35 or enemy["status"]!=0 or safe is None)
         if state["stage"]=="battle_command":
             if heal or throw:target=1;reason="Open bag to heal" if heal else "Open bag to catch a new wild Pokémon"
             elif health_percent(own)<=15:
-                if any(p["species_id"]!=own["species"] and health_percent(p)>40 for p in state["party"]):target=2;reason="Open party to switch safely"
+                if switch:target=2;reason="Open party to switch safely"
                 else:return None
             elif safe is None:return None
             else:target=0;reason="Open fight menu"
             actions=cursor_action(cursor,target)
         else:
-            if heal or throw:actions=[{"button":"B","frames":5}];reason="Return to battle command menu"
+            if heal or throw or switch:actions=[{"button":"B","frames":5}];reason="Return to battle command menu"
             elif safe is None:return None
             else:actions=cursor_action(cursor,safe);reason="Choose legal damage-ranked move "+str(own["moves"][safe])
         if not actions:return None
