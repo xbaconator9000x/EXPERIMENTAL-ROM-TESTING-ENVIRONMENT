@@ -20,7 +20,7 @@ from core.live import Live, LiveError
 from core.action_batch import prepare as prepare_action_batch, take as take_action_batch, observe as observe_action_batch, invalidate as invalidate_action_batch
 from core.gameplay import TYPES, clean_observation, policy, remember, memory_context
 from core.rom_catalog import try_catalog
-from core.jj_fast import Adapter, quick_dialogue, ordinary_dialogue, SHA as JJ_SHA
+from core.jj_fast import Adapter, quick_dialogue, ordinary_dialogue, ADMITTED_SHA256S as JJ_RELEASES
 from core.jj_battle import BattleAdapter
 from core.gen3_profiles import open_profile, VanillaField, VanillaBattle
 from core.native_acceptance import Acceptance
@@ -294,7 +294,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     model.structured["inventory"]=battles.bag(live)
                     party=model.structured.get("party")
                     if isinstance(party,list):meta["native_party_count"]=len(party)
-                    if sha==JJ_SHA:quest_state(meta,field_before,party)
+                    if sha in JJ_RELEASES:quest_state(meta,field_before,party)
                     # Reachability is computed only when the strategic model is called.
                 native_battle=battles.summary(battle_before,meta)
                 if native_battle is not None:model.structured={"battle":native_battle}
@@ -337,7 +337,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     route=adapter.route_action(field_before,meta)
                     if route:decision,route_expected=route;source="native_route"
                     else:meta.pop("native_route",None)
-            if decision is None and sha==JJ_SHA and battle_before is None and not meta.get("menu_intent"):
+            if decision is None and sha in JJ_RELEASES and battle_before is None and not meta.get("menu_intent"):
                 decision=recovery(meta,screen,rgb,field_before,adapter.verified_field(field_before,meta))
                 if decision:source="field_recovery";meta.pop("event_goal",None);meta.pop("native_route",None)
             if decision is None and field_before is not None and not adapter.verified_field(field_before,meta):
@@ -535,7 +535,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 if not page_file.exists() and sum(1 for _ in pages.glob("*.png"))<5000:page_file.write_bytes(png(rgb))
             meta["history"]=(history+[entry])[-80:]
             meta["quest_memory"]=remember(meta.get("quest_memory",{}),obs,decision,digest(after),meta["decisions"])
-            if sha==JJ_SHA and adapter.admitted:quest_state(meta,field_after,None,obs,decision["objective"])
+            if sha in JJ_RELEASES and adapter.admitted:quest_state(meta,field_after,None,obs,decision["objective"])
             meta["native_diagnostics"]=diagnostic(adapter,battles,menus,field_after,meta)
             rgb=after
             if meta["decisions"]%10==0:
@@ -549,7 +549,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if len(meta["history"])>=24 and len({h["after"] for h in meta["history"][-24:]})<=2:
                 # Field cycles get a bounded set of distinct alternatives before
                 # a terminal review. Do not consume a recovery attempt here.
-                if sha==JJ_SHA and recovery(copy.deepcopy(meta),digest(rgb),rgb,field_after,adapter.verified_field(field_after,meta)) is not None:
+                if sha in JJ_RELEASES and recovery(copy.deepcopy(meta),digest(rgb),rgb,field_after,adapter.verified_field(field_after,meta)) is not None:
                     continue
                 meta["review"]={"scene":decision["scene"],"objective":decision["objective"],"reason":"repeated screen cycle; alternative action required"}
                 save_progress(path,identity,meta,state,rgb)
