@@ -5,6 +5,7 @@ import unittest
 from core.party_knowledge import (
     observe_party, observe_battle, knowledge_context, capture_preference,
     battle_advice, valid_party, party_coverage, retain_verified_outcomes,
+    choose_verified_switch,
 )
 
 
@@ -196,6 +197,29 @@ class PartyKnowledgeTests(unittest.TestCase):
              "detail":{"species":19}})
         self.assertEqual(retain_verified_outcomes(meta),0)
         self.assertEqual(len(meta["party_knowledge"]["verified_outcomes"]),2)
+
+    def test_verified_defensive_switch_matches_native_party_intent(self):
+        from core.jj_battle import BattleAdapter
+        from core.jj_menus import intent_from_battle
+        party=[mon(0,7,hp=2),mon(1,19,hp=30),mon(2,43,hp=18)]
+        enemy={"species":25,"types":["electric"],"hp":22,"max_hp":30,
+               "status":0,"stats":[25]*5,"stages":[6]*8,"level":10}
+        target=choose_verified_switch(party,7,enemy,Catalog)
+        # The Grass-type resistant backup is preferred over a healthy,
+        # vulnerable-neutral Normal-type backup, without guessing a move.
+        self.assertEqual(target["slot"],2)
+        own={"species":7,"types":["water"],"hp":2,"max_hp":30,
+             "moves":[33,55,0,0],"pp":[20,10,0,0],"status":0,
+             "stats":[25]*5,"stages":[6]*8,"level":10}
+        state={"stage":"battle_command","cursor":2,"callback":0x08030611,
+               "wild":False,"own":own,"enemy":enemy,"party":party,
+               "bag":{"balls":[],"items":[]},"disabled":0}
+        policy=BattleAdapter("unused","bad","classic",Catalog)
+        decision,signature=policy.action(state,{"battle_proof":[0x08030611]})
+        self.assertEqual(decision["actions"],[{"button":"A","frames":5}])
+        self.assertEqual(decision["objective"],"Open party to switch safely")
+        intent=intent_from_battle(state,decision,Catalog)
+        self.assertEqual(intent["slot"],2)
 
     def test_unknown_move_effect_is_not_promoted_to_safe_macro(self):
         state=battle([mon()])
