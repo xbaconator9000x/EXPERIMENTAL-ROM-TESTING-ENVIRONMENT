@@ -23,7 +23,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(vision_stall(meta,field))
         meta["history"].pop()
         meta["objective_state"]["phase"]="explore_and_advance_story"
-        self.assertFalse(vision_stall(meta,field))
+        self.assertTrue(vision_stall(meta,field))
 
     def test_recovery_escapes_loop_and_caps(self):
         m={"history":history()}
