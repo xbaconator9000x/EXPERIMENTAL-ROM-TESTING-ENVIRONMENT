@@ -19,7 +19,7 @@ from pathlib import Path
 from core.live import Live, LiveError
 from core.action_batch import prepare as prepare_action_batch, momentum as momentum_action_batch, take as take_action_batch, observe as observe_action_batch, invalidate as invalidate_action_batch
 from core.navigation_memory import record as record_navigation, propose as propose_navigation, unsafe_repeat as unsafe_navigation, learned_context as learned_navigation
-from core.party_knowledge import observe_party, observe_battle, knowledge_context
+from core.party_knowledge import observe_party, observe_battle, knowledge_context, retain_verified_outcomes
 from core.gameplay import TYPES, clean_observation, policy, remember, memory_context
 from core.rom_catalog import try_catalog
 from core.jj_fast import Adapter, quick_dialogue, ordinary_dialogue, MAIN, ADMITTED_SHA256S as JJ_RELEASES
@@ -611,6 +611,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                             and ordinary_dialogue(after) is None
                             and not meta.get("menu_intent")))
             acceptance.observe(witness_before,witness_after,source,meta["decisions"]+1,screen,digest(after),actions)
+            retain_verified_outcomes(meta)
             meta["decisions"]+=1;meta["frames"]+=cost;session_frames+=cost
             entry={"decision":meta["decisions"],"before":screen,"after":digest(after),"actions":actions,"scene":decision["scene"],"objective":decision["objective"],"source":source,"settle_frames":settle}
             # Keep recent decision history in the atomic checkpoint; append full audit locally.
