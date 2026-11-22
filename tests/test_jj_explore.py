@@ -24,7 +24,12 @@ class TestExplorer(unittest.TestCase):
         with patch("core.jj_explore.event_targets",return_value=([npc,warp],"RIGHT")):
             result=ex.inspect(candidate,meta)
         self.assertEqual(result[0],[npc,warp])
-        self.assertEqual(meta["native_event_probe"],{"status":"EVENTS_READ","counts":{"npc":1,"warp":1,"connection":0}})
+        probe=meta["native_event_probe"]
+        self.assertEqual(probe["status"],"EVENTS_READ")
+        self.assertEqual(probe["counts"],{"npc":1,"warp":1,"connection":0})
+        self.assertEqual(probe["reachable"],2)
+        self.assertEqual(probe["attempted"],0)
+        self.assertEqual(probe["event_positions"],[{"kind":"npc","x":3,"y":1},{"kind":"warp","x":4,"y":4}])
         with patch("core.jj_explore.event_targets",side_effect=ValueError("invalid event pointer")):
             self.assertIsNone(ex.inspect(candidate,meta))
         self.assertEqual(meta["native_event_probe"]["status"],"EVENTS_REJECTED")
