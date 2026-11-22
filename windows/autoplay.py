@@ -115,25 +115,24 @@ def main():
                         if proposal and claim_guide(folder/"guides.json",meta["decisions"],screen,proposal,consume):
                             return proposal
                         return None
-                    # A failed guide is consumed before execution. An identical
-                    # command cannot endlessly restart a crashing checkpoint.
+                    # A terminal review must never gate the operator channel.
+                    # Preserve the hash-verified checkpoint; do not require an
+                    # old single-use upgrade marker or previously posted guide.
+                    parked=False
                     if done.is_file():
-                        identity={"rom":job["sha256"],"runner":fingerprint(RUNNER),"goal":job["goal"],"model":a.model}
-                        try:prior=load_progress(folder/"progress.bin",identity)
-                        except (ValueError,OSError,KeyError):continue
-                        if not prior:continue
-                        # Upgrade of an old repetitive-field review can restart
-                        # once under the new recovery policy. Never auto-resume
-                        # actual ending or emulator error.
-                        marker=folder/"unattended-v1-resume"
-                        previous_reason=prior[0].get("review",{}) or {}
-                        upgrade_retry=(finished.get("status")=="NEEDS_REVIEW" and "repeated screen cycle" in previous_reason.get("reason","") and not marker.exists())
-                        operator_marker=folder/"operator-remote-v1-upgrade"
-                        new_upgrade=(not operator_marker.exists())
-                        if not upgrade_retry and not new_upgrade and not guidance(prior[0],hashlib.sha256(prior[2]).hexdigest()):continue
-                        if new_upgrade:operator_marker.write_text("remote recovery available\n",encoding="ascii")
-                        if upgrade_retry:marker.write_text("bounded recovery enabled\n",encoding="ascii")
-                        done.unlink()
+                        identity={"rom":job["sha256"],"runner":fingerprint(RUNNER),
+                                  "goal":job["goal"],"model":a.model}
+                        if upstream:identity["upstream"]=UPSTREAM_COMMIT
+                        checkpoint=folder/("upstream-progress.bin" if upstream else "progress.bin")
+                        try:prior=load_progress(checkpoint,identity)
+                        except (OSError,ValueError,KeyError) as exc:
+                            print(f"#{number}: checkpoint not admitted ({type(exc).__name__}); preserving terminal state",flush=True)
+                            continue
+                        if not prior:
+                            print(f"#{number}: checkpoint missing; preserving terminal state",flush=True)
+                            continue
+                        parked=True
+                        print(f"#{number}: attaching operator to parked {finished['status']} at decision {prior[0]['decisions']}",flush=True)
                     def checked_guide(meta,screen):
                         try:return guidance(meta,screen,consume=True)
                         except (OSError,ValueError,KeyError):return None
@@ -145,6 +144,11 @@ def main():
                     identity={"rom":job["sha256"],"runner":fingerprint(RUNNER),"goal":job["goal"],"model":a.model}
                     if upstream:identity["upstream"]=UPSTREAM_COMMIT
                     with ControlPoller(remote,number,job["sha256"],folder,identity,RUNNER,rom) as control:
+                        if parked:
+                            control.review=True
+                            # Only after the control path is constructed do we
+                            # mark the old terminal review as supervised.
+                            done.unlink()
                         if upstream:
                             from core.upstream_campaign import campaign
                             from core.upstream_port import PortError
@@ -161,6 +165,8 @@ def main():
                     break
                 retry_delay=15
             except (OSError,ValueError,KeyError,RuntimeError) as e:
+                # No tokens, paths, ROM/save contents, or untrusted GitHub
+                # body text in logs; report classification for diagnosis.
                 print("Controller retry: "+type(e).__name__,flush=True)
                 retry_delay=min(120,retry_delay*2)
             time.sleep(retry_delay)

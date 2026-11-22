@@ -114,12 +114,15 @@ class ControlPoller:
         if details.get("state")!="open":return
         count=details.get("comments",0)
         if type(count) is not int or count<0:return
-        # The latest two pages cover recent commands despite high-volume frame
-        # reporting. At most 200 comments are decoded, never all evidence chunks.
-        page=max(1,(count+99)//100)
+        # A playthrough can have thousands of screenshot comments.
+        # Each page must stay under Remote.request's 2-MiB response cap,
+        # even when all comments contain maximal 44-KiB base64 chunks.
+        # Scan the latest three pages at 20 comments/page rather than
+        # requesting a 100-comment page that can silently fail forever.
+        page=max(1,(count+19)//20)
         rows=[]
-        for p in range(max(1,page-1),page+1):
-            rows.extend(self.remote.request("/issues/"+str(self.issue)+"/comments?per_page=100&page="+str(p)))
+        for p in range(max(1,page-2),page+1):
+            rows.extend(self.remote.request("/issues/"+str(self.issue)+"/comments?per_page=20&page="+str(p)))
         rows.sort(key=lambda x:x.get("id",0))
         if not self.cursor_file.exists():
             self.seen=max((x["id"] for x in rows if type(x.get("id")) is int),default=0)
