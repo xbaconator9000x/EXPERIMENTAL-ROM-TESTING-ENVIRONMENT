@@ -5,6 +5,25 @@ from core.live import LiveError
 def history():
     return [{"before":"a" if i%2==0 else "b","after":"b" if i%2==0 else "a","scene":"hospital_room","actions":[{"button":"UP" if i%2==0 else "DOWN","frames":16}]} for i in range(12)]
 class Tests(unittest.TestCase):
+    def test_script_lock_waits_are_noninteractive_bounded_and_checkpointed(self):
+        from core.jj_unattended import script_settle
+        meta={}
+        first=script_settle(meta,"script-warning")
+        self.assertEqual(first["scene"],"native_script_settle")
+        self.assertEqual(first["actions"],[{"button":"WAIT","frames":24}])
+        self.assertEqual(script_settle(meta,"script-warning")["actions"],
+                         [{"button":"WAIT","frames":24}])
+        self.assertEqual(script_settle(meta,"script-warning")["actions"],
+                         [{"button":"WAIT","frames":24}])
+        self.assertIsNone(script_settle(meta,"script-warning"))
+        self.assertEqual(meta["script_settle"]["same_screen"],3)
+        # A new frame can legitimately be another step of a script, but
+        # the total budget cannot be extended forever by animation frames.
+        for i in range(5):
+            self.assertIsNotNone(script_settle(meta,f"animated-{i}"))
+        self.assertIsNone(script_settle(meta,"animated-5"))
+        self.assertEqual(meta["script_settle"]["total"],8)
+
     def test_starter_vision_budget_parks_no_progress_instead_of_burning_gpu(self):
         from core.jj_unattended import vision_stall
         from core.firered import Field
