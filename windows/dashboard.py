@@ -73,6 +73,7 @@ def pretty_age(value):
     return f"{value//3600}h {(value%3600)//60:02d}m"
 
 def action_text(row):
+    if row.get("source")=="upstream_skill":return str(row.get("skill","skill"))[:80]+f" ({row.get('frames',0)}f)"
     actions=row.get("actions",[])
     return "  /  ".join(f"{a.get('button','?')} {a.get('frames','?')}f" for a in actions if isinstance(a,dict)) or "—"
 
@@ -120,7 +121,7 @@ class Dashboard:
         ttk.Label(right,text="Recent decision history",style="Small.TLabel").pack(anchor="w",pady=(3,4))
         self.history=tk.Text(right,height=10,width=38,bg="#111827",fg="#d1d5db",relief="flat",font=("Consolas",10),wrap="word",state="disabled")
         self.history.pack(fill="both",expand=True)
-        self.footer=ttk.Label(wrapper,text="No host controls · no network exposure · close this window without stopping the AI.",style="Sub.TLabel",wraplength=800);self.footer.pack(anchor="w",pady=(10,0))
+        self.footer=ttk.Label(wrapper,text="Private operator controls enabled · no incoming network listener · close this window without stopping the AI.",style="Sub.TLabel",wraplength=800);self.footer.pack(anchor="w",pady=(10,0))
         self.refresh()
     def pick(self,event=None):
         idx=self.goalpicker.current()
@@ -140,6 +141,7 @@ class Dashboard:
                 self.footer.configure(text="No goal folder yet. Check the continuous player PowerShell window.")
                 return
             p=self.selected/"progress.bin"
+            if not p.is_file():p=self.selected/"upstream-progress.bin"
             if not p.is_file():
                 self.status("WAITING FOR CHECKPOINT")
                 self.footer.configure(text="Goal found, but the emulator has not saved its first checkpoint.")
@@ -164,6 +166,7 @@ class Dashboard:
                 stats=meta.get("engine_metrics",{})
                 suffix=f" | Native {stats.get('native',0)} | Model calls {stats.get('model_calls',0)}" if stats else ""
                 diag=meta.get("native_diagnostics",{})
+                if meta.get("native_acceptance"):suffix+=" | "+str(meta["native_acceptance"].get("status",""))
                 if diag:suffix+=f" | Field: {'active' if diag.get('field_verified') else diag.get('field_reason','pending')}"
                 self.model.configure(text=("Model: "+str(identity.get("model","—"))+suffix)[:240])
                 self.history.configure(state="normal");self.history.delete("1.0","end")
@@ -172,15 +175,29 @@ class Dashboard:
                 self.history.configure(state="disabled")
             identity,meta,rgb,mtime=self.data;age=max(0,time.time()-mtime)
             self.metrics["age"].configure(text=pretty_age(age))
+            operator=None
+            op_file=self.selected/"operator-status.json"
+            if op_file.is_file() and not op_file.is_symlink() and op_file.stat().st_size<=4096:
+                operator=json.loads(op_file.read_text(encoding="utf-8"))
+            op_event=operator.get("event",{}) if operator else {}
             end=terminal(self.selected)
-            if end:self.status(end.replace("_"," "),"#92400e" if end!="EMULATOR_ERROR" else "#991b1b")
+            recovery=meta.get("review_recovery",{})
+            recovery_status=recovery.get("status") if isinstance(recovery,dict) else None
+            if operator and operator.get("paused"):
+                self.status("OPERATOR PAUSED","#1d4ed8")
+            elif recovery_status=="RUNNING":
+                self.status("AUTOMATIC RECOVERY: "+str(recovery.get("phase","A")).upper(),"#92400e")
+            elif (operator and op_event.get("action")=="needs_review" and not end
+                  and recovery_status not in ("PROGRESS","INTERRUPTED")):
+                self.status("OPERATOR RECOVERY WAIT","#92400e")
+            elif end:self.status(end.replace("_"," "),"#92400e" if end!="EMULATOR_ERROR" else "#991b1b")
             elif meta.get("model_error"):self.status("MODEL RETRY: "+str(meta["model_error"]),"#92400e")
             elif meta.get("review"):self.status("REVIEW REQUESTED","#92400e")
             elif age>180:self.status("NO RECENT CHECKPOINT","#92400e")
             elif meta["decisions"]==0:self.status("FIRST DECISION PENDING","#1d4ed8")
             else:self.status("CHECKPOINT VERIFIED","#166534")
             q=meta.get("objective_state",{})
-            self.footer.configure(text=("Objective: "+str(q.get("phase","waiting for native evidence")).replace("_"," ")+" | ")+"Screen reflects last saved decision. "+("No recent update; the model may be slow, stopped, or retrying." if age>180 else "Hash-verified local checkpoint."))
+            self.footer.configure(text=("Objective: "+str(q.get("phase","waiting for native evidence")).replace("_"," ")+" | ")+("Private operator command: "+str(op_event.get("action","unknown"))+" | " if operator else "")+"Screen reflects last saved decision. "+("No recent update; the model may be slow, stopped, or retrying." if age>180 else "Hash-verified local checkpoint."))
         except (OSError,ValueError,KeyError,TypeError,tk.TclError):
             self.status("WAITING FOR VALID SNAPSHOT","#92400e")
             self.footer.configure(text="Checkpoint not readable yet; retrying automatically.")

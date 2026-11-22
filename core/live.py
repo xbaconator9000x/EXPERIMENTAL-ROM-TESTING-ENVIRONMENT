@@ -7,6 +7,7 @@ import threading
 import subprocess
 import tempfile
 import time
+from core.live_preview import write_frame
 
 class LiveError(RuntimeError):
     pass
@@ -24,6 +25,12 @@ class Live:
         self.proc = None
         self.responses=queue.Queue()
         self.reader=None
+        # Opt-in, local-only display channel. The runner binary, checkpoint
+        # ABI and normal controller protocol remain entirely unchanged.
+        preview=os.environ.get("ROMTEST_PREVIEW_FILE")
+        self.preview_file=Path(preview) if preview else None
+        self.preview_last=0.0
+        self.preview_rgb=None
         try:
             path = Path(self.tmp.name) / "game.gba"
             path.write_bytes(data)
@@ -86,13 +93,29 @@ class Live:
         result = self._request(f"STEP {keys:x} {frames}")
         if not result.startswith("OK "):
             raise LiveError("invalid frame response")
+        # A viewer sees a fresh framebuffer after individual native STEP
+        # commands, not only after a completed strategic AI decision. Limit
+        # optional extra reads to ~10/s so screenshots don't dominate runtime.
+        if self.preview_file is not None and time.monotonic()-self.preview_last>=0.10:
+            try:self.rgb()
+            except LiveError:pass  # display must never cancel a valid input
         return int(result[3:])
 
     def rgb(self):
         result=self._request("FRAME")
         if not result.startswith("RGB ") or len(result)!=4+240*160*6:
             raise LiveError("invalid screenshot response")
-        return bytes.fromhex(result[4:])
+        rgb=bytes.fromhex(result[4:])
+        if self.preview_file is not None and rgb!=self.preview_rgb:
+            try:
+                write_frame(self.preview_file,rgb)
+                self.preview_rgb=rgb
+            except (OSError,ValueError):
+                # The preview file is never part of game correctness,
+                # persistence, or the private operator protocol.
+                pass
+        self.preview_last=time.monotonic()
+        return rgb
 
     def screenshot(self,path):
         with open(path,"xb") as file:

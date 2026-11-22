@@ -29,6 +29,10 @@ class RedundancyTests(unittest.TestCase):
         self.assertEqual(m.decide(b"","goal",[],[],{})["scene"],"field")
         self.assertEqual(m.last_source,"vision_backup")
         self.assertEqual(len(calls),3)
+        self.assertEqual([a["result"] for a in m.last_trace],
+                         ["ValueError","ValueError","accepted"])
+        self.assertEqual([a["tier"] for a in m.last_trace],
+                         ["primary","primary","fallback"])
     def test_bag_selection(self):
         o=clean_observation({"stage":"bag","list_cursor":0,"bag_purpose":"catch","wild":True,"capture_target":True,"items":[{"slot":0,"name":"Potion","count":1},{"slot":1,"name":"Great Ball","count":3},{"slot":2,"name":"Master Ball","count":1}]})
         self.assertEqual(item_policy(o)[0],[{"button":"DOWN","frames":5}])

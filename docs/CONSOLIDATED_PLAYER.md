@@ -44,3 +44,11 @@ https://datacrystal.tcrf.net/wiki/Pok%C3%A9mon_3rd_Generation
 https://bulbapedia.bulbagarden.net/wiki/Move_data_structure_in_Generation_III
 
 Context-sensitive idle settling lets animations and dialogue finish before the next vision inference. Actual settle timing is recorded in the action journal. Remote exact-state guidance retains fixed 24-frame settling. Compact observations retain scene and quest facts; rich planning is periodic or context-triggered. This optimizes inference count, not a measured speed guarantee.
+
+## Native-only mode (experimental)
+`-NativeOnly` on the Windows installer or `--native-only` on the player
+runs existing deterministic gameplay skills **without constructing an
+Ollama client or using the GPU**. When an unknown state is reached it parks
+for review and preserves the same checkpoint identity; it never asks an LLM
+for buttons. This mode is opt-in until authentic Jessie & James playback
+proves full-game native coverage. The hybrid mode is unchanged by default.

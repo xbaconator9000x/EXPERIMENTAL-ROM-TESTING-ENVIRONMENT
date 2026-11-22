@@ -20,6 +20,9 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(m["engine_metrics"]["native"],2)
         self.assertEqual(m["engine_metrics"]["model_calls"],1)
         self.assertEqual(m["engine_metrics"]["frames"],142)
+        count_decision(m,"batch_navigation",.12,None,40)
+        self.assertEqual(m["engine_metrics"]["native"],3)
+        self.assertEqual(m["engine_metrics"]["model_calls"],1)
     def test_map_transition_and_stall(self):
         m={};a=(Field((1,1),(1,1),4,4,(0,)*16),123,set())
         b=(Field((2,1),(1,2),4,4,(0,)*16),123,set())

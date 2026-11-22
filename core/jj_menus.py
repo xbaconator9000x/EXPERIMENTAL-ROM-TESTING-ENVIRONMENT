@@ -7,7 +7,8 @@ is returned to the vision planner instead of replaying A on stale RAM.
 import hashlib
 from pathlib import Path
 from core.jj_battle import anchors,health_percent
-from core.jj_fast import SHA,MAIN,PARTY,decode_party,u
+from core.jj_fast import ADMITTED_SHA256S,MAIN,PARTY,decode_party,u
+from core.party_knowledge import choose_verified_switch
 from core.firered import span
 from core.live import LiveError
 
@@ -48,7 +49,19 @@ def decode_bag(raw,inventory):
     if row>42 or scroll>42 or cursor>len(rows):raise ValueError("bag position")
     return {"stage":"bag","pocket":pocket,"cursor":cursor,"rows":rows}
 
-def intent_from_battle(state,decision):
+def decode_emerald_bag(raw,inventory):
+    """Emerald BagPosition: 5 pockets, location byte, independent u16 arrays."""
+    if len(raw)!=28 or not inventory or raw[4]!=1:raise ValueError("not battle bag")
+    pocket=raw[5]
+    if pocket not in (0,1):raise ValueError("unsupported pocket")
+    row=u(raw,8+2*pocket);scroll=u(raw,18+2*pocket)
+    rows=inventory["items" if pocket==0 else "balls"]
+    cursor=row+scroll
+    if row>30 or scroll>30 or cursor>len(rows):raise ValueError("bag position")
+    # Normalize pocket to existing driver's internal semantic code.
+    return {"stage":"bag","pocket":0 if pocket==0 else 2,"cursor":cursor,"rows":rows}
+
+def intent_from_battle(state,decision,catalog=None):
     if not state or state["stage"]!="battle_command" or decision["actions"]!=[{"button":"A","frames":5}]:return None
     reason=decision["objective"]
     own=state["own"]
@@ -59,16 +72,28 @@ def intent_from_battle(state,decision):
         item=select_item(state["bag"],"catch")
         if item:return {"purpose":"catch","item":item,"active":own["species"],"remaining":16,"phase":"list"}
     elif state["cursor"]==2 and reason=="Open party to switch safely":
-        choices=[p for p in state["party"] if p["species_id"]!=own["species"] and health_percent(p)>40]
-        if choices:
-            target=max(choices,key=lambda p:(health_percent(p),p["level"]))
+        target=choose_verified_switch(state["party"],own["species"],state["enemy"],catalog)
+        if target:
             return {"purpose":"switch","slot":target["slot"],"active":own["species"],"remaining":12,"phase":"list"}
     return None
 
 class MenuDriver:
     def __init__(self,rom,sha,battle):
         self.battle=battle;self.bag_ok=False;self.party_ok=False;self.rom_size=0
-        if sha!=SHA or not battle.callbacks:return
+        self.profile=getattr(battle,"p",None)
+        self.main=MAIN;self.bag_base=BAG;self.bag_cb=None
+        self.party_cb=PARTY_CB;self.party_cursor=PARTY_CURSOR;self.party_order=PARTY_ORDER
+        if self.profile:
+            p=self.profile
+            # Caller admits a byte-identical vanilla revision through open_profile.
+            self.main=p.main;self.bag_base=p.bag_base;self.bag_cb=p.bag_cb
+            self.party_cb=p.party_cb;self.party_cursor=p.party_cursor;self.party_order=p.party_order
+            self.rom_size=16*1024*1024
+            self.bag_ok=bool(p.bag_base and p.bag_cb)
+            self.party_ok=bool(p.party_cursor and p.party_order and p.party_cb)
+            self.sha=sha
+            return
+        if sha not in ADMITTED_SHA256S or not battle.callbacks:return
         try:
             data=Path(rom).read_bytes();self.rom_size=len(data)
             if hashlib.sha256(data).hexdigest()!=sha:return
@@ -81,14 +106,21 @@ class MenuDriver:
         intent=meta.get("menu_intent")
         if not intent or intent.get("phase")!="list" or intent.get("remaining",0)<=0:return None
         try:
-            cb=live.integer(MAIN+4,4)
+            if self.profile and live.sha256!=self.sha:return None
+            cb=live.integer(self.main+4,4)
             if not cb&1 or not span(cb&~1,2,0x08000000,0x08000000+self.rom_size) or cb in self.battle.callbacks:return None
             if intent["purpose"] in ("heal","catch") and self.bag_ok:
-                s=decode_bag(live.read(BAG,20),self.battle.bag(live))
-            elif intent["purpose"]=="switch" and self.party_ok and cb==PARTY_CB:
-                order=decode_order(live.read(PARTY_ORDER,3))
-                cursor=live.integer(PARTY_CURSOR,1)
-                party=decode_party(live.read(PARTY,600))
+                if self.bag_cb and cb!=self.bag_cb:return None
+                if self.profile and self.profile.code==b"BPEE":
+                    s=decode_emerald_bag(live.read(self.bag_base,28),self.battle.bag(live))
+                else:s=decode_bag(live.read(self.bag_base,20),self.battle.bag(live))
+            elif intent["purpose"]=="switch" and self.party_ok and cb==self.party_cb:
+                order=decode_order(live.read(self.party_order,3))
+                cursor=live.integer(self.party_cursor,1)
+                if self.profile:
+                    from core.gen3_profiles import party_snapshot
+                    party=party_snapshot(live,self.profile)
+                else:party=decode_party(live.read(PARTY,600))
                 slots={p["slot"]:p for p in party}
                 if cursor>=len(party) or intent["slot"] not in slots or slots[intent["slot"]]["hp"]==0:return None
                 if any(i not in slots for i in order[:len(party)]):return None

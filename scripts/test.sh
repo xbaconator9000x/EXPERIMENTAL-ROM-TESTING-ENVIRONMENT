@@ -26,3 +26,4 @@ echo 'PASS: synthetic native input and assertion regressions, not actual game ac
 cc -std=gnu11 -O2 -Wall -Wextra core/live_runner.c -o build/live_runner -lmgba
 clang --target=arm-none-eabi -mcpu=arm7tdmi -fuse-ld=lld -nostdlib -Wl,-Ttext=0x080000c0,--oformat=binary tests/field_fixture.s -o build/field.bin
 python3 tests/native_walk.py | tee evidence/native-walk.log
+python3 tests/native_operator.py | tee evidence/native-operator.log

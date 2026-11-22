@@ -2,12 +2,13 @@ name: Native Windows ROM testing host
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, development/upstream-gameplay-ports]
     paths:
       - 'windows/**'
       - 'core/state_runner.c'
       - 'core/live_runner.c'
       - 'core/run_locked.py'
+      - 'core/operator_*.py'
       - 'tests/**'
       - '.github/workflows/windows-host.yml'
 permissions:
@@ -56,6 +57,13 @@ jobs:
           python tests/make_gba_fixture.py --output build/synthetic.gba
           python -m core.run_locked --runner build/state_runner.exe --rom build/synthetic.gba --sha256 "$(sha256sum build/synthetic.gba | cut -d' ' -f1)" --scenario tests/scenarios/input-pass.txt --out build/windows-evidence
           test -f build/windows-evidence/frame_*.ppm
+      - name: Real Windows native control acceptance on synthetic ROM
+        shell: pwsh
+        run: |
+          python tests/make_gba_fixture.py --output build/synthetic.gba
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/native_operator.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: No private game data in published CI
         shell: pwsh
         run: |

@@ -27,7 +27,7 @@ class TestBattle(unittest.TestCase):
         a=BattleAdapter("unused","bad","classic",Catalog())
         s={"callback":0x08030611,"stage":"battle_command","cursor":0,"wild":True,
            "own":decode_battler(mon()),"enemy":decode_battler(mon(4,10,5)),
-           "party":[{"species_id":19,"hp":30,"max_hp":30}],
+           "party":[{"slot":0,"species_id":19,"level":8,"hp":30,"max_hp":30,"moves":[33,52,55,0],"pp":[10,10,10,0],"status":0}],
            "bag":{"balls":[{"id":4,"count":3}],"items":[]},"disabled":0}
         m={};self.assertIsNone(a.action(s,m))
         a.corroborate(s,{"stage":"battle_command","cursor":1},m)

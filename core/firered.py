@@ -15,6 +15,7 @@ class Profile:
     context_addr: int
     context_value: int
     locks: tuple = ()
+    direct_save: bool = False
 
 @dataclass(frozen=True)
 class Field:
@@ -55,7 +56,7 @@ class Reader:
                 raise LiveError("invalid lock predicate")
             if self.u(address,width)&mask!=value:
                 raise LiveError("field locked")
-        save=self.u(p.saveblock_ptr,4)
+        save=p.saveblock_ptr if p.direct_save else self.u(p.saveblock_ptr,4)
         if save%4 or not span(save,8,0x02000000,0x02040000):
             raise LiveError("invalid saveblock pointer")
         x,y=self.u(save,2),self.u(save+2,2)

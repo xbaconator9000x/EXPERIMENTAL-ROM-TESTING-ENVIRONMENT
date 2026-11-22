@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from core.autoplay import parse_decision, choose, png, save_progress, load_progress, play, title_recovery, model_error
+from core.autoplay import parse_decision, choose, png, save_progress, load_progress, play, title_recovery, model_error, settle_frames, OllamaVision
 from windows.autoplay import goal
 
 def decision(button="A"):
@@ -41,16 +41,76 @@ class AutoTests(unittest.TestCase):
         self.assertEqual(p[:8],b"\x89PNG\r\n\x1a\n")
         self.assertEqual(int.from_bytes(p[16:20],"big"),720)
         self.assertEqual(int.from_bytes(p[20:24],"big"),480)
+    def test_native_world_memory_reaches_local_qwen_without_an_extra_emulator(self):
+        class Response:
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def read(self,n):
+                return json.dumps({"message":{"content":json.dumps(decision())}}).encode()
+        class Opener:
+            payload=None
+            def open(self,request,timeout):
+                self.payload=json.loads(request.data)
+                return Response()
+        model=OllamaVision()
+        model.opener=Opener()
+        model.world_reference={"confirmed_maps":3,"verified_edges":2,
+             "recent_positions":[{"map":"1:2","pos":[3,4],"decision":5}]}
+        result=model._decide(bytes(115200),"continue",[],[],{},model.model,False)
+        self.assertEqual(result,decision())
+        message=json.loads(model.opener.payload["messages"][1]["content"])
+        self.assertEqual(message["visited_world"],model.world_reference)
+        self.assertIsNone(message["native_field"])
+        self.assertEqual(model.opener.payload["messages"][1]["images"][0][:8],
+                         "iVBORw0K")
+
+    def test_ollama_timing_trace_is_numeric_and_contains_no_model_content(self):
+        class Response:
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def read(self,n):
+                return json.dumps({"message":{"content":json.dumps(decision())},
+                    "load_duration":900000000,"prompt_eval_duration":2000000000,
+                    "eval_duration":12000000000,"total_duration":14900000000,
+                    "eval_count":80,"prompt_eval_count":250}).encode()
+        class Opener:
+            def open(self,*args,**kwargs):return Response()
+        model=OllamaVision();model.opener=Opener()
+        self.assertEqual(model.decide(bytes(115200),"goal",[],[],{}),decision())
+        self.assertEqual(len(model.last_trace),1)
+        attempt=model.last_trace[0]
+        self.assertEqual(attempt["tier"],"primary")
+        self.assertEqual(attempt["mode"],"rich")
+        self.assertEqual(attempt["result"],"accepted")
+        self.assertEqual(attempt["load_ms"],900.0)
+        self.assertEqual(attempt["prompt_eval_ms"],2000.0)
+        self.assertEqual(attempt["eval_ms"],12000.0)
+        self.assertEqual(attempt["prompt_eval_count"],250)
+        self.assertEqual(attempt["eval_count"],80)
+        self.assertNotIn("content",str(attempt))
+        self.assertNotIn("goal",str(attempt))
+
     def test_persistent_loop(self):
         with tempfile.TemporaryDirectory() as d:
             folder=Path(d);runner=folder/"runner";runner.write_bytes(b"fake")
             with patch("core.autoplay.Live",FakeLive):
                 status,meta,rgb=play(runner,folder/"rom","a"*64,"goal",folder,Model(),max_decisions=3)
                 self.assertEqual(status,"BUDGET_REACHED");self.assertEqual(meta["decisions"],3)
+                self.assertEqual(set(meta["history"][-1]["timing"]),
+                                 {"pre_input_ms","emulator_ms","post_input_ms"})
                 status,meta2,rgb2=play(runner,folder/"rom","a"*64,"goal",folder,Model(),max_decisions=5)
                 self.assertEqual(meta2["decisions"],5);self.assertGreater(meta2["frames"],meta["frames"])
                 self.assertNotEqual(rgb,rgb2)
                 with self.assertRaises(ValueError):play(runner,folder/"rom","a"*64,"different goal",folder,Model(),max_decisions=6)
+    def test_stale_dialogue_label_does_not_force_150_idle_frames(self):
+        d={"scene":"native_dialogue","objective":"Advance recognized ordinary dialogue page",
+           "actions":[{"button":"UP","frames":16}],"review":False}
+        self.assertEqual(settle_frames(d,"vision_compact",visible_dialogue=False),24)
+        self.assertEqual(settle_frames(d,"vision_compact",visible_dialogue=True),150)
+        self.assertEqual(settle_frames(d,"vision_compact"),150)
+        self.assertEqual(settle_frames({"scene":"field","actions":[{"button":"DOWN","frames":16}],
+                        "objective":"escape","review":False},"vision_compact",visible_dialogue=False),24)
+
     def test_checkpoint_integrity(self):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)/"state";save_progress(p,{"id":1},{"turn":1},b"a",bytes(115200))

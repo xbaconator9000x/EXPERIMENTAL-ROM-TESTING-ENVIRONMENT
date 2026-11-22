@@ -1,0 +1,742 @@
+import logging
+
+from typing import Any as MGBAClient
+from core.upstream_leafgreen.state import GameState, PokemonStatus, StateDiff, GameContext
+from core.upstream_leafgreen.constants import Addr, SPECIES_NAMES, MOVE_NAMES, GEN3_CHARSET
+
+logger = logging.getLogger(__name__)
+
+# ── Gen III XOR Decryption (Tier 2) ─────────────────────────────────────────
+
+SUBSTRUCT_ORDER = [
+    "GAEM", "GAME", "GEAM", "GEMA", "GMAE", "GMEA",
+    "AGEM", "AGME", "AEGM", "AEMG", "AMGE", "AMEG",
+    "EGAM", "EGMA", "EAGM", "EAMG", "EMGA", "EMAG",
+    "MGAE", "MGEA", "MAGE", "MAEG", "MEGA", "MEAG",
+]
+
+
+def decrypt_substructs(raw_100: bytes) -> dict[str, bytes]:
+    pid   = int.from_bytes(raw_100[0:4], "little")
+    ot_id = int.from_bytes(raw_100[4:8], "little")
+    key   = pid ^ ot_id
+    enc   = bytearray(raw_100[32:80])
+    for i in range(0, 48, 4):
+        word = int.from_bytes(enc[i:i+4], "little") ^ key
+        enc[i:i+4] = word.to_bytes(4, "little")
+    order = SUBSTRUCT_ORDER[pid % 24]
+    return {letter: bytes(enc[i * 12:(i + 1) * 12]) for i, letter in enumerate(order)}
+
+
+def parse_species(sub: dict) -> int:
+    return int.from_bytes(sub["G"][0:2], "little")
+
+
+def parse_evs(sub: dict) -> tuple:
+    """(HP, Atk, Def, Spe, SpA, SpD) effort values from the E substructure (pokefirered PokemonSubstruct2)."""
+    return tuple(sub["E"][0:6])
+
+
+def parse_ivs(sub: dict) -> tuple[tuple, int]:
+    """((HP, Atk, Def, Spe, SpA, SpD) individual values, ability slot) from the M substructure: a u32 at +4 packed as
+    hp:5 atk:5 def:5 spe:5 spa:5 spd:5 isEgg:1 abilityNum:1 (pokefirered PokemonSubstruct3)."""
+    v = int.from_bytes(sub["M"][4:8], "little")
+    return tuple((v >> (5 * i)) & 31 for i in range(6)), (v >> 31) & 1
+
+
+def parse_moves(sub: dict) -> tuple[list[int], list[int]]:
+    a = sub["A"]
+    return [int.from_bytes(a[i*2:(i+1)*2], "little") for i in range(4)], [a[8+i] for i in range(4)]
+
+
+def decode_status(word: int) -> str:
+    if word == 0: return "healthy"
+    sleep = word & 0b111
+    if sleep: return f"asleep ({sleep} turns)"
+    if word & (1 << 3): return "poisoned"
+    if word & (1 << 4): return "burned"
+    if word & (1 << 5): return "frozen"
+    if word & (1 << 6): return "paralyzed"
+    if word & (1 << 7): return "badly_poisoned"
+    return "unknown"
+
+
+# ── Main reader class ────────────────────────────────────────────────────────
+
+class LeafGreenReader:
+    def __init__(self, client: MGBAClient, decrypt: bool = True):
+        self.client  = client
+        self.decrypt = decrypt
+        # Last-known-good values for the pointer-deref reads. On a title screen,
+        # reset, or mid-transition frame the deref'd SaveBlock1/map pointer can be
+        # 0 or stale; returning the previous good value avoids feeding garbage
+        # (bad positions, or a badge flicker that the badge-increase logic would
+        # misread as newly-earned) into the diff/stuck machinery (#66/#58).
+        self._last_badges: tuple[int, int] = (0, 0)
+        self._last_pos:    tuple[int, int] = (0, 0)
+        self._last_map:    tuple[int, int] = (0, 0)
+        self._last_good_party: list | None = None
+
+    @staticmethod
+    def _valid_ewram_ptr(ptr: int) -> bool:
+        """True if `ptr` points into EWRAM, where SaveBlock1 / the DMA map block
+        live. The pointer at 0x03005008 reads 0 or garbage on non-gameplay frames."""
+        return 0x02000000 <= ptr < 0x02040000
+
+    def read_badges(self) -> tuple[int, int]:
+        """Returns (badge_count, raw_bitmask).
+        badge_count = popcount of the u8 bitmask (0–8).
+        raw_bitmask = the u8 itself — use for bitwise diff to detect which bit flipped.
+
+        Read via the live SaveBlock1 pointer: the block is DMA-relocated on map
+        transitions, so a fixed address drifts off the badge byte after a warp and
+        returns garbage (phantom badges / false milestones). If the pointer itself
+        is invalid (title/reset/transition), return the last good read rather than
+        a spurious 0 that would flicker and misfire the badge-increase milestone."""
+        ptr = self.client.read32(Addr.SAVEBLOCK1_PTR)
+        if not self._valid_ewram_ptr(ptr):
+            return self._last_badges
+        raw = self.client.read8(ptr + Addr.BADGES_OFFSET)
+        self._last_badges = (bin(raw).count("1"), raw)
+        return self._last_badges
+
+    def detect_context(self) -> GameContext:
+        # gMain.callback2 is the game's live "current screen" dispatcher and the
+        # authoritative gate (verified live via libmgba). The old OVERWORLD_FLAG /
+        # BATTLE_FLAGS addresses were wrong: OVERWORLD_FLAG reads 0 during
+        # free-roam (inverted), and BATTLE_FLAGS is transient/persists. See the
+        # constants.py notes for the full signal table.
+        cb2 = self.client.read32(Addr.GMAIN_CALLBACK2)
+        if cb2 == Addr.CB2_BATTLE:
+            return GameContext.IN_BATTLE
+
+        # MENU_OPEN (0x03002415) alone is NOT a reliable menu gate: after a
+        # full-screen menu (Pokédex/Bag/…) closes it STAYS 1 even back on the
+        # field, which used to trap the agent in a phantom IN_MENU forever. The
+        # reliable "a menu is on screen right now" signal is SCREEN_FADE
+        # (0x03000F9C) == 1 — it holds while a menu is open but returns to 0 the
+        # moment it closes (also 1 during warp fades). We combine the two:
+        #   MENU_OPEN says a menu is/was open (over-stays, never under-reports);
+        #   SCREEN_FADE says something is on top of the field right now.
+        menu_flag = self.client.read8(Addr.MENU_OPEN) != 0
+        fade      = self.client.read8(Addr.SCREEN_FADE) == 0x01
+
+        if cb2 == Addr.CB2_OVERWORLD:
+            # On the field callback: overlay menu (Start/Save), a warp fade, a
+            # script dialog, real free-roam, or a stale MENU_OPEN after a menu.
+            if menu_flag and fade:
+                return GameContext.IN_MENU          # overlay menu genuinely open
+            if fade:
+                return GameContext.TRANSITIONING     # warp/map-load fade (no menu)
+            # fade == 0 here, so any lingering MENU_OPEN is stale → treat as field.
+            if self.client.read8(Addr.SCRIPT_RAM) != 0:
+                return GameContext.DIALOG_OPEN       # NPC/sign/script text
+            return GameContext.OVERWORLD
+
+        # Non-field, non-battle callback: a full-screen menu has its own callback
+        # (Pokédex/Party/Bag/Option/…) AND sets MENU_OPEN; everything else here is
+        # a warp/load/intro screen.
+        if menu_flag:
+            return GameContext.IN_MENU
+        return GameContext.TRANSITIONING
+
+    def _decode_mon(self, raw: bytes, slot: int) -> PokemonStatus:
+        """Decode one 100-byte Gen III party struct into a PokemonStatus.
+        Works for gPlayerParty and gEnemyParty alike (identical struct)."""
+        status_word = int.from_bytes(raw[0x50:0x54], "little")
+        level       = raw[0x54]
+        current_hp  = int.from_bytes(raw[0x56:0x58], "little")
+        max_hp      = int.from_bytes(raw[0x58:0x5A], "little")
+
+        species_id, species_name = 0, "Unknown"
+        move_ids   = [0] * 4
+        move_names = [""] * 4
+        pp         = [0] * 4
+        ivs, evs, ability_slot, friendship, held_item = (), (), 0, 0, 0
+
+        if self.decrypt:
+            try:
+                sub = decrypt_substructs(raw)
+                species_id   = parse_species(sub)
+                species_name = SPECIES_NAMES.get(species_id, f"#{species_id}")
+                move_ids, pp = parse_moves(sub)
+                move_names   = [MOVE_NAMES.get(m, f"move_{m}") if m else "" for m in move_ids]
+                ivs, ability_slot = parse_ivs(sub)
+                evs          = parse_evs(sub)
+                friendship   = sub["G"][9]
+                held_item    = int.from_bytes(sub["G"][2:4], "little")
+            except Exception:
+                # decryption failed — Tier 1 data still valid
+                logger.warning("party mon decrypt failed for slot %d", slot, exc_info=True)
+
+        nick = []
+        for b in raw[8:18]:                      # nickname: 10 Gen III chars, 0xFF-terminated (unencrypted)
+            if b == 0xFF:
+                break
+            nick.append(GEN3_CHARSET.get(b) or "")
+        return PokemonStatus(
+            slot=slot, level=level, current_hp=current_hp, max_hp=max_hp,
+            status=decode_status(status_word), species_id=species_id,
+            species_name=species_name, move_ids=move_ids, move_names=move_names, pp=pp,
+            nickname="".join(nick).strip(),
+            personality=int.from_bytes(raw[0:4], "little"),
+            ivs=ivs, evs=evs, friendship=friendship, ability_slot=ability_slot, held_item=held_item,
+            stats=tuple(int.from_bytes(raw[o:o + 2], "little") for o in (0x58, 0x5A, 0x5C, 0x5E, 0x60, 0x62)),
+        )
+
+    # Gen III internal species indices run 1..411 (Bulbasaur..Chimecho-era slots);
+    # move ids top out ~354. A decode outside these is garbage, not a real Pokémon.
+    _MAX_SPECIES = 411
+    _MAX_MOVE_ID = 559
+
+    @classmethod
+    def _mon_plausible(cls, mon: "PokemonStatus") -> bool:
+        return (1 <= mon.species_id <= cls._MAX_SPECIES
+                and all(0 <= m <= cls._MAX_MOVE_ID for m in mon.move_ids))
+
+    def read_party(self) -> list[PokemonStatus]:
+        party = []
+        for slot in range(6):
+            raw = self.client.read_range(Addr.PARTY_DATA + slot * 100, 100)
+            if len(raw) < 100:
+                continue
+            # Empty slots have level 0 — skip them (no separate party-count address)
+            if raw[0x54] == 0:
+                continue
+            party.append(self._decode_mon(raw, slot))
+        # On the battle-load frame the encrypted substructs decrypt to nonsense
+        # (out-of-range species / move ids), which made use_move fail with "not a
+        # known move" and the agent flail for a step (#58). Reject an implausible read
+        # and reuse the last good party — the data settles within a frame or two.
+        if party and all(self._mon_plausible(m) for m in party):
+            self._last_good_party = party
+            return party
+        if party and self._last_good_party is not None:
+            return self._last_good_party
+        return party
+
+    def read_active_battle_moves(self) -> tuple[list[int], list[str], list[int]]:
+        """The ACTIVE player battler's moves + PP from gBattleMons[0] — the exact set the
+        in-battle FIGHT menu shows and gMoveSelectionCursor indexes. Use this in battle
+        instead of gPlayerParty[0], which is the LEAD and wrong once another mon is out (a
+        switch, or a forced send-out after the lead faints — e.g. a caught Pidgey with only
+        two moves, where indexing the lead's slots lands on an empty slot). Returns
+        (move_ids, move_names, pp)."""
+        base = Addr.BATTLE_MON0_SPECIES               # gBattleMons[0] base (species @ +0)
+        ids = [self.client.read16(base + 0x0C + 2 * i) for i in range(4)]   # moves @ +0x0C
+        pp = [self.client.read8(base + 0x24 + i) for i in range(4)]         # pp    @ +0x24
+        names = [MOVE_NAMES.get(m, f"move_{m}") if m else "" for m in ids]
+        return ids, names, pp
+
+    def read_battle_volatiles(self, battler: int = 0) -> dict:
+        """Volatile conditions of a battler from gBattleMons[n].status2 (pokefirered STATUS2_*): wrapped (2-5
+        turns: Wrap/Bind/Fire Spin/Clamp/Whirlpool), escape_prevention (Mean Look / Spider Web / Block),
+        confused, infatuated, tormented, recharge, nightmare, cursed. Empty when no battle data."""
+        st = self.client.read32(Addr.BATTLE_MON0_SPECIES + 0x58 * battler + Addr.BATTLE_MON_STATUS2)
+        if st in (0, 0xFFFFFFFF):
+            return {}
+        out = {}
+        if st & (0x7 << 13):
+            out["wrapped"] = (st >> 13) & 0x7
+        if st & (1 << 26):
+            out["escape_prevention"] = True
+        if st & 0x7:
+            out["confused"] = True
+        if st & (0xF << 16):
+            out["infatuated"] = True
+        if st & (1 << 31):
+            out["tormented"] = True
+        if st & (1 << 22):
+            out["recharge"] = True
+        if st & (1 << 27):
+            out["nightmare"] = True
+        if st & (1 << 28):
+            out["cursed"] = True
+        return out
+
+    def is_trapped(self, battler: int = 0) -> bool:
+        v = self.read_battle_volatiles(battler)
+        return bool(v.get("wrapped") or v.get("escape_prevention"))
+
+    def read_disabled_move(self, battler: int = 0) -> tuple[int, int]:
+        """(move_id, turns_left) of the move Disable has locked for a battler, or (0, 0). The game
+        refuses a disabled move at the FIGHT menu ("The move is disabled!") and leaves the menu
+        up — a skill that just re-pressed A on it looped forever."""
+        base = Addr.DISABLE_STRUCTS + Addr.DISABLE_STRUCT_SIZE * battler
+        move = self.client.read16(base + 4)
+        if not move:
+            return 0, 0
+        return move, self.client.read8(base + 0xB) & 0xF
+
+    def read_active_battle_usable_pp(self) -> tuple[list[int], list[str], list[int], int | None, int]:
+        """Active battler's (move_ids, names, pp, disabled_slot, disabled_turns) where `pp` has the
+        DISABLED slot zeroed — so every consumer that ranks/validates moves by PP skips it for free."""
+        ids, names, pp = self.read_active_battle_moves()
+        dmove, turns = self.read_disabled_move(0)
+        slot = ids.index(dmove) if dmove and dmove in ids else None
+        eff = list(pp)
+        if slot is not None:
+            eff[slot] = 0
+        return ids, names, eff, slot, turns
+
+    def read_active_battle_species(self) -> int:
+        """Species of the active player battler (gBattleMons[0].species)."""
+        return self.client.read16(Addr.BATTLE_MON0_SPECIES)
+
+    def read_active_battle_hp(self) -> int:
+        """Current HP of the active player battler (gBattleMons[0].hp @ +0x28)."""
+        return self.client.read16(Addr.BATTLE_MON0_SPECIES + 0x28)
+
+    def read_foe_battler(self) -> dict:
+        """The foe's LIVE battler (gBattleMons[1], layout per pokefirered BattlePokemon): its moves (names), computed Atk /
+        Spe / SpA and ability id. Right for a trainer's 2nd+ mon too (gEnemyParty[0] is only their first). {} when empty."""
+        bm = Addr.BATTLE_MON0_SPECIES + 0x58
+        c = self.client
+        if not c.read16(bm):
+            return {}
+        ids = [c.read16(bm + 0x0C + 2 * i) for i in range(4)]
+        return {"moves": tuple(MOVE_NAMES.get(m, "") for m in ids if m),
+                "attack": c.read16(bm + 0x02), "speed": c.read16(bm + 0x06), "sp_attack": c.read16(bm + 0x08),
+                "ability": c.read8(bm + 0x20)}
+
+    def read_enemy_lead(self) -> PokemonStatus | None:
+        """Decode the opponent's active Pokémon (gEnemyParty[0]) — the wild mon or
+        the trainer's current lead. gEnemyParty is a fixed global (not DMA-relocated),
+        600 bytes before gPlayerParty. Returns None if the slot is empty (no battle).
+        Reads truth from memory so we never depend on the model to identify the foe."""
+        raw = self.client.read_range(Addr.ENEMY_PARTY, 100)
+        if len(raw) < 100 or raw[0x54] == 0:
+            return None
+        mon = self._decode_mon(raw, 0)
+        # gEnemyParty[0] is only the trainer's FIRST mon: when a later one is out (Brock's Onix
+        # after Geodude) it still showed the fainted Geodude — "Opponent: GEODUDE ... HP 0" for the
+        # whole second fight, and 'foe fainted' while a healthy foe was swinging. The live battler
+        # (gBattleMons[1]) is the truth for who is out and how much HP it has.
+        try:
+            from dataclasses import replace
+            bm = Addr.BATTLE_MON0_SPECIES + 0x58
+            sp, lvl = self.client.read16(bm), self.client.read8(bm + 0x2A)
+            mx = self.client.read16(bm + 0x2C)
+            if sp and lvl and mx:
+                hp = self.client.read16(bm + 0x28)
+                if sp != mon.species_id:
+                    mon = replace(mon, species_id=sp, species_name=SPECIES_NAMES.get(sp, f"#{sp}"),
+                                  move_ids=[0] * 4, move_names=[""] * 4, pp=[0] * 4)
+                mon = replace(mon, current_hp=hp, max_hp=mx, level=lvl)
+        except Exception:
+            pass
+        return mon
+
+    _FACING = {1: "Down", 2: "Up", 3: "Left", 4: "Right"}        # gObjectEvents[0].facingDirection: DIR_SOUTH, NORTH, WEST, EAST
+
+    def read_player_facing(self) -> str | None:
+        """The button name ('Up'/'Down'/'Left'/'Right') the player is facing, or None. Needed to face a WALKABLE tile (a hidden item): pressing the direction you
+        already face steps onto the tile instead of turning."""
+        return self._FACING.get(self.client.read8(Addr.OW_PLAYER + 0x18) & 0x0F)
+
+    def read_enemy_party(self) -> list[PokemonStatus]:
+        """The opponent's whole team (gEnemyParty[0..5], empty slots dropped) — HP as stored in the party structs, so the mon that is
+        out right now may be stale until it leaves the field; use it to COUNT what a trainer has left, not to read the live foe."""
+        raw = self.client.read_range(Addr.ENEMY_PARTY, 600)
+        out = []
+        for i in range(6):
+            chunk = raw[i * 100:(i + 1) * 100]
+            if len(chunk) < 100 or chunk[0x54] == 0:
+                continue
+            try:
+                out.append(self._decode_mon(chunk, 0))
+            except Exception:
+                continue
+        return out
+
+    def read_key_item_count(self) -> int:
+        """Number of occupied key-item slots in the bag. The key-item event fires when
+        this increases. Item IDs are cleartext; empty slots read id 0."""
+        sb = self.client.read32(Addr.SAVEBLOCK1_PTR)
+        if not self._valid_ewram_ptr(sb):
+            return 0
+        raw = self.client.read_range(sb + Addr.KEY_ITEMS_OFFSET, Addr.KEY_ITEMS_SLOTS * 4)
+        return sum(1 for i in range(0, len(raw), 4)
+                   if (raw[i] | (raw[i + 1] << 8)) != 0)
+
+    def _encryption_key(self) -> int:
+        """gSaveBlock2->encryptionKey (u32) — XORs money and item quantities."""
+        sb2 = self.client.read32(Addr.SAVEBLOCK2_PTR)
+        if not self._valid_ewram_ptr(sb2):
+            return 0
+        return self.client.read32(sb2 + Addr.ENCRYPTION_KEY_OFFSET)
+
+    def read_money(self) -> int:
+        """Player money (¥). Stored as u32 ^ encryptionKey. Returns 0 if the save
+        pointers aren't live (title/transition)."""
+        sb1 = self.client.read32(Addr.SAVEBLOCK1_PTR)
+        if not self._valid_ewram_ptr(sb1):
+            return 0
+        val = self.client.read32(sb1 + Addr.MONEY_OFFSET) ^ self._encryption_key()
+        return val if 0 <= val <= 999_999 else 0
+
+    def read_coins(self) -> int:
+        """Game Corner coins (the Coin Case). A u16 at SaveBlock1 + 0x294, XOR'd with the low half of the encryption key."""
+        sb1 = self.client.read32(Addr.SAVEBLOCK1_PTR)
+        if not self._valid_ewram_ptr(sb1):
+            return 0
+        val = self.client.read16(sb1 + Addr.COINS_OFFSET) ^ (self._encryption_key() & 0xFFFF)
+        return val if 0 <= val <= 9999 else 0
+
+    def read_bag(self) -> dict[int, int]:
+        """Return {item_id: quantity} across the Items and Poké Balls pockets.
+        Item IDs are cleartext; quantities are XOR'd with the low 16 bits of the
+        encryption key. Empty slots (id 0) are skipped. Key items are counted
+        separately (read_key_item_count) — they have no meaningful quantity."""
+        sb1 = self.client.read32(Addr.SAVEBLOCK1_PTR)
+        if not self._valid_ewram_ptr(sb1):
+            return {}
+        k16 = self._encryption_key() & 0xFFFF
+        bag: dict[int, int] = {}
+        for off, slots in ((Addr.ITEMS_OFFSET, Addr.ITEMS_SLOTS),
+                           (Addr.BALLS_OFFSET, Addr.BALLS_SLOTS)):
+            try:
+                raw = self.client.read_range(sb1 + off, slots * 4)
+            except Exception:
+                logger.warning("bag read failed for pocket offset %s", off, exc_info=True)
+                continue
+            for i in range(0, len(raw) - 3, 4):
+                iid = raw[i] | (raw[i + 1] << 8)
+                if iid == 0:
+                    continue
+                qty = (raw[i + 2] | (raw[i + 3] << 8)) ^ k16
+                if 0 < qty <= 999:          # guard against a stale/garbage decrypt
+                    bag[iid] = qty
+        return bag
+
+    def count_item(self, item_id: int) -> int:
+        """How many of `item_id` the player holds, in the Items / Poké Balls pockets or the TM case."""
+        n = self.read_bag().get(item_id, 0)
+        return n or dict(self.read_tmhm_pocket()).get(item_id, 0)
+
+    def read_items_pocket(self) -> list[tuple[int, int]]:
+        """The Items pocket as an ORDERED [(item_id, quantity)] list, in the same slot
+        order the in-game list displays (compacted — empties skipped). use_item needs
+        the order to navigate the bag list cursor to a specific item. Quantities are
+        XOR'd with the low 16 bits of the encryption key, like read_bag."""
+        sb1 = self.client.read32(Addr.SAVEBLOCK1_PTR)
+        if not self._valid_ewram_ptr(sb1):
+            return []
+        k16 = self._encryption_key() & 0xFFFF
+        out: list[tuple[int, int]] = []
+        try:
+            raw = self.client.read_range(sb1 + Addr.ITEMS_OFFSET, Addr.ITEMS_SLOTS * 4)
+        except Exception:
+            logger.warning("items pocket read failed", exc_info=True)
+            return []
+        for i in range(0, len(raw) - 3, 4):
+            iid = raw[i] | (raw[i + 1] << 8)
+            if iid == 0:
+                continue
+            qty = (raw[i + 2] | (raw[i + 3] << 8)) ^ k16
+            if 0 < qty <= 999:
+                out.append((iid, qty))
+        return out
+
+    def read_item_ball_tiles(self) -> list[tuple[int, int]]:
+        """Grid coords of item balls currently on screen — loaded object events whose
+        graphicsId is the item-ball sprite. A collected ball's flag suppresses its
+        spawn, so this lists exactly the UNcollected balls nearby (the pickup skill
+        walks to each and presses A). currentCoords are grid coord + 7, like NPCs.
+        Empty on any read hiccup (never crashes the caller)."""
+        out: list[tuple[int, int]] = []
+        try:
+            for i in range(Addr.OBJECT_EVENT_COUNT):
+                b = Addr.OBJECT_EVENTS + i * Addr.OBJECT_EVENT_STRIDE
+                if not (self.client.read8(b) & 1):                 # not active
+                    continue
+                if self.client.read8(b + Addr.OBJECT_GFX_OFFSET) != Addr.OBJ_GFX_ITEM_BALL:
+                    continue
+                x = self.client.read16(b + 0x10)
+                y = self.client.read16(b + 0x12)
+                x = x - 65536 if x >= 32768 else x
+                y = y - 65536 if y >= 32768 else y
+                out.append((x - Addr.OBJECT_COORD_OFFSET, y - Addr.OBJECT_COORD_OFFSET))
+        except Exception:
+            logger.warning("item-ball tile read failed", exc_info=True)
+            return []
+        return out
+
+    def _read_pocket(self, offset: int, slots: int) -> list[tuple[int, int]]:
+        sb1 = self.client.read32(Addr.SAVEBLOCK1_PTR)
+        if not self._valid_ewram_ptr(sb1):
+            return []
+        k16 = self._encryption_key() & 0xFFFF
+        out: list[tuple[int, int]] = []
+        try:
+            raw = self.client.read_range(sb1 + offset, slots * 4)
+        except Exception:
+            logger.warning("pocket read failed", exc_info=True)
+            return []
+        for i in range(0, len(raw) - 3, 4):
+            iid = raw[i] | (raw[i + 1] << 8)
+            if iid == 0:
+                continue
+            qty = (raw[i + 2] | (raw[i + 3] << 8)) ^ k16
+            if 0 < qty <= 999:
+                out.append((iid, qty))
+        return out
+
+    def read_var(self, n: int) -> int:
+        """Script variable `n` (0x4000+: VAR_TEMP_0 = 0x4000, ...). 0 when SaveBlock1 isn't readable."""
+        sb1 = self.client.read32(Addr.SAVEBLOCK1_PTR)
+        if not self._valid_ewram_ptr(sb1):
+            return 0
+        return self.client.read16(sb1 + Addr.VARS_OFFSET + (n - 0x4000) * 2)
+
+    BOX_COUNT, BOX_SLOTS, BOXMON_SIZE = 14, 30, 80
+
+    def _storage_ptr(self) -> int:
+        ptr = self.client.read32(Addr.POKEMON_STORAGE_PTR)
+        return ptr if 0x02000000 <= ptr < 0x02040000 else 0
+
+    def read_current_box(self) -> int | None:
+        base = self._storage_ptr()
+        return self.client.read8(base) if base else None
+
+    def _decode_box_mon(self, raw80: bytes, box: int, slot: int) -> dict | None:
+        raw = raw80 + bytes(20)
+        if len(raw80) < self.BOXMON_SIZE or not any(raw[:80]):
+            return None
+        try:
+            sub = decrypt_substructs(raw)
+            sid = parse_species(sub)
+            if not (1 <= sid <= self._MAX_SPECIES):
+                return None
+            ids, _pp = parse_moves(sub)
+            exp = int.from_bytes(sub["G"][4:8], "little")
+            ivs, ability_slot = parse_ivs(sub)
+            evs = parse_evs(sub)
+        except Exception:
+            return None
+        from core.upstream_leafgreen.growth import level_from_exp
+        nick = []
+        for b in raw[8:18]:
+            if b == 0xFF:
+                break
+            nick.append(GEN3_CHARSET.get(b) or "")
+        return {"box": box, "slot": slot, "species_id": sid, "species_name": SPECIES_NAMES.get(sid, f"#{sid}"),
+                "nickname": "".join(nick).strip(), "level": level_from_exp(sid, exp),
+                "move_names": [MOVE_NAMES.get(m, "") for m in ids if m],
+                "personality": int.from_bytes(raw[0:4], "little"), "ivs": ivs, "evs": evs,
+                "friendship": sub["G"][9], "ability_slot": ability_slot,
+                "held_item": int.from_bytes(sub["G"][2:4], "little")}
+
+    def read_boxes(self) -> list[dict]:
+        """Every occupied PC slot, box by box (one memory read per box)."""
+        base = self._storage_ptr()
+        if not base:
+            return []
+        out = []
+        size = self.BOX_SLOTS * self.BOXMON_SIZE
+        for b in range(self.BOX_COUNT):
+            blob = bytes(self.client.read_range(base + 4 + b * size, size))
+            for sl in range(self.BOX_SLOTS):
+                mon = self._decode_box_mon(blob[sl * self.BOXMON_SIZE:(sl + 1) * self.BOXMON_SIZE], b, sl)
+                if mon:
+                    out.append(mon)
+        return out
+
+    def read_stored_species(self) -> set[int]:
+        """Species ids of everything in the PC boxes (~3 ms): the catch policy must know a copy is already stored."""
+        try:
+            return {m["species_id"] for m in self.read_boxes()}
+        except Exception:
+            logger.warning("PC species read failed", exc_info=True)
+            return set()
+
+    KANTO_DEX = 151
+
+    def read_pokedex(self) -> tuple[int, int]:
+        """(owned, seen) counts for the 151 Kanto species (national dex numbers 1-151 = bits 0-150), or (0, 0)."""
+        sb2 = self.client.read32(Addr.SAVEBLOCK2_PTR)
+        if not self._valid_ewram_ptr(sb2):
+            return 0, 0
+
+        def count(off):
+            raw = self.client.read_range(sb2 + off, 19)         # 152 bits cover Kanto
+            bits = sum(bin(b).count("1") for b in raw[:18]) + bin(raw[18] & 0x7F).count("1")
+            return min(bits, self.KANTO_DEX)
+        return count(Addr.DEX_OWNED_OFFSET), count(Addr.DEX_SEEN_OFFSET)
+
+    def read_dex_owned_ids(self) -> set:
+        """The set of Kanto species ids (1-151) registered as CAUGHT."""
+        sb2 = self.client.read32(Addr.SAVEBLOCK2_PTR)
+        if not self._valid_ewram_ptr(sb2):
+            return set()
+        raw = self.client.read_range(sb2 + Addr.DEX_OWNED_OFFSET, 19)
+        return {n + 1 for n in range(self.KANTO_DEX) if raw[n >> 3] >> (n & 7) & 1}
+
+    def read_dex_owned(self, species_id: int) -> bool | None:
+        """Is this species already registered as CAUGHT in the Pokédex? (Kanto species: internal id == national
+        number for 1-151.) None when unreadable or outside Kanto."""
+        if not (1 <= species_id <= self.KANTO_DEX):
+            return None
+        sb2 = self.client.read32(Addr.SAVEBLOCK2_PTR)
+        if not self._valid_ewram_ptr(sb2):
+            return None
+        n = species_id - 1
+        return bool(self.client.read8(sb2 + Addr.DEX_OWNED_OFFSET + (n >> 3)) >> (n & 7) & 1)
+
+    def read_flag(self, n: int) -> bool:
+        """A gSaveBlock1 event/system flag (relocation-safe)."""
+        sb1 = self.client.read32(Addr.SAVEBLOCK1_PTR)
+        if not self._valid_ewram_ptr(sb1):
+            return False
+        return bool(self.client.read8(sb1 + Addr.FLAGS_OFFSET + (n >> 3)) >> (n & 7) & 1)
+
+    def read_tmhm_pocket(self) -> list[tuple[int, int]]:
+        """TMs/HMs the player owns as ordered [(item_id, qty)] — the TM Case list order."""
+        return self._read_pocket(Addr.TMHM_OFFSET, Addr.TMHM_SLOTS)
+
+    def read_key_items(self) -> list[int]:
+        """Key item ids in bag-list order (compacted)."""
+        sb1 = self.client.read32(Addr.SAVEBLOCK1_PTR)
+        if not self._valid_ewram_ptr(sb1):
+            return []
+        raw = self.client.read_range(sb1 + Addr.KEY_ITEMS_OFFSET, Addr.KEY_ITEMS_SLOTS * 4)
+        ids = [raw[i] | (raw[i + 1] << 8) for i in range(0, len(raw) - 3, 4)]
+        return [i for i in ids if i]
+
+    def read_objects_by_gfx(self, gfx_ids) -> list[tuple[int, int]]:
+        """Grid coords of loaded, active object events whose graphicsId is in gfx_ids
+        (Cut trees / Rock Smash rocks / Strength boulders / item balls)."""
+        ids = set(gfx_ids)
+        out: list[tuple[int, int]] = []
+        try:
+            for i in range(Addr.OBJECT_EVENT_COUNT):
+                b = Addr.OBJECT_EVENTS + i * Addr.OBJECT_EVENT_STRIDE
+                if not (self.client.read8(b) & 1):
+                    continue
+                if self.client.read8(b + Addr.OBJECT_GFX_OFFSET) not in ids:
+                    continue
+                x = self.client.read16(b + 0x10)
+                y = self.client.read16(b + 0x12)
+                x = x - 65536 if x >= 32768 else x
+                y = y - 65536 if y >= 32768 else y
+                out.append((x - Addr.OBJECT_COORD_OFFSET, y - Addr.OBJECT_COORD_OFFSET))
+        except Exception:
+            logger.warning("object read failed", exc_info=True)
+            return []
+        return out
+
+    def is_biking(self) -> bool:
+        """gPlayerAvatar.flags bit1 (Mach Bike) or bit2 (Acro Bike): the player is on the Bicycle."""
+        return bool(self.client.read8(Addr.PLAYER_AVATAR_FLAGS) & 0x06)
+
+    def is_surfing(self) -> bool:
+        return bool(self.client.read8(Addr.PLAYER_AVATAR_FLAGS) & Addr.AVATAR_SURFING)
+
+    def read_player_pos(self) -> tuple[int, int]:
+        """
+        Read live player tile coordinates via the DMA-protected map block.
+        DataCrystal: [0x03005008]+0x000 = Camera X (= player tile X),
+                     [0x03005008]+0x002 = Camera Y (= player tile Y).
+        The block address changes on every map transition — always deref
+        PLAYER_PTR rather than caching the resolved address. On a non-gameplay
+        frame the pointer is invalid; return the last good position instead of
+        reading from a bogus address (#66).
+        """
+        ptr = self.client.read32(Addr.PLAYER_PTR)
+        if not self._valid_ewram_ptr(ptr):
+            return self._last_pos
+        self._last_pos = (self.client.read16(ptr), self.client.read16(ptr + 2))
+        return self._last_pos
+
+    def read_current_map(self) -> tuple[int, int]:
+        """Current (map_bank, map_id) from the live DMA map block.
+
+        NOT the absolute Addr.MAP_BANK/MAP_ID — those are the parent OUTDOOR map
+        and stay on the town while you are inside its buildings, so they report
+        e.g. Pallet Town (3,0) even in the player's bedroom. The block behind
+        PLAYER_PTR carries the true current map at +0x04 (group) / +0x05 (num),
+        which is what MAP_NAMES is keyed on. Returns the last good map when the
+        pointer is invalid (title/reset/transition) rather than a bogus (#66).
+        """
+        ptr = self.client.read32(Addr.PLAYER_PTR)
+        if not self._valid_ewram_ptr(ptr):
+            return self._last_map
+        self._last_map = (self.client.read8(ptr + Addr.MAP_GROUP_OFFSET),
+                          self.client.read8(ptr + Addr.MAP_NUM_OFFSET))
+        return self._last_map
+
+    def read_state(self) -> GameState:
+        context = self.detect_context()
+        party   = self.read_party()
+        px, py  = self.read_player_pos()
+        map_bank, map_id = self.read_current_map()
+        badge_count, badge_bits = self.read_badges()
+        return GameState(
+            context=context,
+            badges=badge_count,
+            badge_bits=badge_bits,
+            party=party,
+            party_count=len(party),
+            map_bank=map_bank,
+            map_id=map_id,
+            player_x=px,
+            player_y=py,
+            screen_fading=(context == GameContext.TRANSITIONING),
+        )
+
+    def diff(self, before: GameState | None, after: GameState) -> StateDiff:
+        d = StateDiff()
+        if before is None:
+            return d
+        d.badges_changed     = before.badges != after.badges
+        d.party_size_changed = before.party_count != after.party_count
+        d.battle_started     = (before.context != GameContext.IN_BATTLE and
+                                after.context  == GameContext.IN_BATTLE)
+        d.battle_ended       = (before.context == GameContext.IN_BATTLE and
+                                after.context  != GameContext.IN_BATTLE)
+        d.context_changed    = before.context != after.context
+
+        # Pair each mon with ITSELF, not with whatever now sits in the same slot: a switch (and the
+        # battle party screen's physical reorder) permutes gPlayerParty, which read as "Slot 0
+        # leveled up 18→5; Slot 1 leveled up 5→18" and fed the model nonsense. Prefer the same slot
+        # when it is the same species, else the first unclaimed earlier mon of that species.
+        claimed: set[int] = set()
+        pairs: list[tuple[int, int]] = []
+        by_pid = {bq.personality: k for k, bq in enumerate(before.party) if bq.personality}
+        for i, a in enumerate(after.party):
+            j = None
+            if a.personality and by_pid:
+                j = by_pid.get(a.personality)      # the same Pokémon (survives reorders AND evolution); new mons stay unpaired
+                if j is not None and j in claimed:
+                    j = None
+                if j is not None:
+                    claimed.add(j)
+                    pairs.append((j, i))
+                continue
+            if i < len(before.party) and before.party[i].species_id == a.species_id and i not in claimed:
+                j = i
+            else:
+                j = next((k for k, bq in enumerate(before.party)
+                          if k not in claimed and bq.species_id == a.species_id), None)
+            if j is None and i < len(before.party) and i not in claimed:
+                j = i                      # unknown species (decryption gave 0): fall back to the slot
+            if j is not None:
+                claimed.add(j)
+                pairs.append((j, i))
+        for j, i in pairs:
+            b, a = before.party[j], after.party[i]
+            if b.current_hp != a.current_hp:
+                d.hp_changed.append(i)
+                if a.current_hp < b.current_hp:
+                    d.notes.append(f"Slot {i} took damage: {b.current_hp}→{a.current_hp} HP")
+                else:
+                    d.notes.append(f"Slot {i} healed: {b.current_hp}→{a.current_hp} HP")
+            if b.level != a.level:
+                d.level_changed.append(i)
+                d.notes.append(f"Slot {i} leveled up: {b.level}→{a.level}")
+            if b.move_ids != a.move_ids:
+                d.moves_changed.append(i)
+                d.notes.append(f"Slot {i} learned a new move")
+        if d.badges_changed:
+            d.notes.append(f"Badge count: {before.badges}→{after.badges}")
+        return d

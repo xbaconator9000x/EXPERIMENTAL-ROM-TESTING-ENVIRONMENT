@@ -4,11 +4,11 @@ from core.jj_fast import MAP_HEADER,VMAP,DIR,u
 from core.live import LiveError
 DIRECTION={1:"DOWN",2:"UP",3:"LEFT",4:"RIGHT"}
 
-def crossings(live,size,field):
+def crossings(live,size,field,map_header=MAP_HEADER,vmap=VMAP):
     def romread(ptr,n):
         if ptr%4 or not span(ptr,n,0x08000000,0x08000000+size):raise ValueError("connection pointer")
         return live.read(ptr,n)
-    ptr=live.integer(MAP_HEADER+12,4)
+    ptr=live.integer(map_header+12,4)
     if not ptr:return []
     head=romread(ptr,8)
     count=int.from_bytes(head[:4],"little",signed=True)
@@ -19,7 +19,7 @@ def crossings(live,size,field):
     for i in range(count):
         row=raw[i*12:(i+1)*12];direction=DIRECTION.get(row[0])
         if direction:rows.append((i,direction,int.from_bytes(row[4:8],"little",signed=True),[row[8],row[9]]))
-    vw,vh,grid=(live.integer(VMAP+i,4) for i in (0,4,8))
+    vw,vh,grid=(live.integer(vmap+i,4) for i in (0,4,8))
     if (vw,vh)!=(field.width+15,field.height+14) or vw*vh>0x2800 or grid%2 or not span(grid,vw*vh*2,0x02000000,0x02040000):raise ValueError("connection grid")
     padded=live.read(grid,vw*vh*2)
     result=[]

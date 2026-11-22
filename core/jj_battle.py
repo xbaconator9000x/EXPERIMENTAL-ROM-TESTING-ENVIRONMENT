@@ -6,11 +6,13 @@ visible menu corroboration are mandatory. No direct input cursor mutation.
 """
 import hashlib
 from pathlib import Path
-from core.jj_fast import SHA, MAIN, PARTY, BATTLE, CTRL, SAVE_PTR, decode_party, u
+from core.jj_fast import SHA, SHA_V1033, MAIN, PARTY, BATTLE, CTRL, SAVE_PTR, decode_party, u
 from core.firered import span
 from core.rom_catalog import TYPES
 from core.live import LiveError
-from core.gameplay import cursor_action, effectiveness
+from core.gameplay import cursor_action
+from core.upstream_battle import classic_multiplier, safe_damage_kind, catch_setup_slot
+from core.party_knowledge import capture_preference, choose_verified_switch
 
 BATTLE_CB=0x08011101
 ACTION_CURSOR=0x02023FF8
@@ -25,6 +27,17 @@ FINGERPRINTS={
     0x0802E439:"1116443a18d9ddafd403e4f6ba064850bb0f3a42fc7188dc7e6c038abf8f4255",
     0x0802EA11:"2c835b19645b5808f66eb1b2c50d4d5538b6543ddd9c1d0f5d781869f94253f1",
 }
+# v1.03.3 retains the original battle ABI and command callbacks, but changes
+# the move-menu callback executable span. Admit that changed span only for its
+# exact local ROM fingerprint; runtime flags/cursor/HP/PP corroboration remains
+# mandatory before any controller action.
+MOVE_CB_V1033="46cd710ef8d11f650386cc212b3e6e3e810a7eaee849970e59d5e995bac29020"
+
+def fingerprints_for(sha):
+    if sha==SHA:return FINGERPRINTS
+    if sha==SHA_V1033:return {**FINGERPRINTS,0x0802EA11:MOVE_CB_V1033}
+    return {}
+
 
 def anchors(data,addresses):
     # Scan aligned literal references without a Python loop over every word.
@@ -84,7 +97,9 @@ def move_rank(own,enemy,rows,disabled=0,capture=False):
         if not mid or not own["pp"][slot] or mid==disabled:continue
         row=rows.get(mid)
         if not row or not row["power"] or row["power"]==1:continue
-        mult=effectiveness(row["type"],enemy["types"])
+        kind=safe_damage_kind(row,enemy["status"],capture)
+        if kind is None:continue
+        mult=classic_multiplier(row["type"],enemy["types"])
         if not mult:continue
         physical=row["type"] in ("normal","fighting","flying","poison","ground","rock","bug","ghost","steel")
         ai,di=(0,1) if physical else (3,4)
@@ -98,22 +113,23 @@ def move_rank(own,enemy,rows,disabled=0,capture=False):
         if capture:
             # Leave margin for damage variation and critical hits. If no safe
             # damaging attack exists, caller should use the bag or vision.
-            if est*2.1>=enemy["hp"]:continue
+            if kind!="false_swipe" and est*2.1>=enemy["hp"]:continue
             quality=est*row["accuracy"]/100
-        else:quality=est*row["accuracy"]/100
+        else:quality=est*row["accuracy"]/100*(.5 if kind in ("charge","semi_inv","recharge") else 1)
         candidates.append((quality,-slot,slot))
     return max(candidates)[2] if candidates else None
 
 class BattleAdapter:
     def __init__(self,rom,sha,goal,catalog):
         self.callbacks=set();self.field_inventory=False;self.catalog=catalog
-        if sha!=SHA or "classic" not in goal.lower() or "modern" in goal.lower():return
+        fingerprints=fingerprints_for(sha)
+        if not fingerprints or "classic" not in goal.lower() or "modern" in goal.lower():return
         try:
             data=Path(rom).read_bytes()
             if hashlib.sha256(data).hexdigest()!=sha:return
             self.field_inventory=anchors(data,(SAVE_PTR,SAVE2))
             if not catalog or not anchors(data,(MAIN,PARTY,BATTLE,CTRL,FLAGS,DISABLE,ACTION_CURSOR,MOVE_CURSOR)):return
-            self.callbacks={a for a,fp in FINGERPRINTS.items() if hashlib.sha256(data[(a&~1)-0x08000000:(a&~1)-0x08000000+32]).hexdigest()==fp}
+            self.callbacks={a for a,fp in fingerprints.items() if hashlib.sha256(data[(a&~1)-0x08000000:(a&~1)-0x08000000+32]).hexdigest()==fp}
             if BATTLE_CB not in self.callbacks:self.callbacks.clear()
         except (OSError,ValueError):return
 
@@ -158,22 +174,28 @@ class BattleAdapter:
         rows=self.catalog.move_ids
         healing=sum(x["count"] for x in bag["items"] if x["id"] in (13,19,20,21,22)) if bag else 0
         balls=sum(x["count"] for x in bag["balls"] if x["id"] in (2,3,4)) if bag else 0
-        # Capture useful new species while building a starting team. Never
-        # throw at trainers, use a Master Ball, or deliberately farm captures.
-        capture=state["wild"] and balls>0 and len(state["party"])<3 and not any(p["species_id"]==enemy["species"] for p in state["party"])
+        # Build a diversified six-slot team, preserving a reserve of balls
+        # beyond the initial three. Roster data must be checksum-consistent;
+        # do not catch duplicates, in trainer battles, or on guessed types.
+        catch_plan=capture_preference(state["party"],enemy,self.catalog,bag,wild=state["wild"])
+        capture=catch_plan["eligible"] and balls>0
         safe=move_rank(own,enemy,rows,state["disabled"],capture)
+        if capture and health_percent(enemy)>35 and not enemy["status"]:
+            setup=catch_setup_slot(own,enemy,rows,state["disabled"])
+            if setup is not None:safe=setup
         heal=health_percent(own)<=25 and healing>0
+        switch=choose_verified_switch(state["party"],own["species"],enemy,self.catalog) if health_percent(own)<=15 else None
         throw=capture and (health_percent(enemy)<=35 or enemy["status"]!=0 or safe is None)
         if state["stage"]=="battle_command":
             if heal or throw:target=1;reason="Open bag to heal" if heal else "Open bag to catch a new wild Pokémon"
             elif health_percent(own)<=15:
-                if any(p["species_id"]!=own["species"] and health_percent(p)>40 for p in state["party"]):target=2;reason="Open party to switch safely"
+                if switch:target=2;reason="Open party to switch safely"
                 else:return None
             elif safe is None:return None
             else:target=0;reason="Open fight menu"
             actions=cursor_action(cursor,target)
         else:
-            if heal or throw:actions=[{"button":"B","frames":5}];reason="Return to battle command menu"
+            if heal or throw or switch:actions=[{"button":"B","frames":5}];reason="Return to battle command menu"
             elif safe is None:return None
             else:actions=cursor_action(cursor,safe);reason="Choose legal damage-ranked move "+str(own["moves"][safe])
         if not actions:return None

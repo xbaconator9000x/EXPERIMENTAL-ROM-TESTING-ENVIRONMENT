@@ -24,6 +24,8 @@ class CatalogTests(unittest.TestCase):
         o=clean_observation({"stage":"battle_moves","cursor":0,"enemy":"CHARMANDER","own":"SQUIRTLE","moves":[{"slot":0,"name":"Tackle","pp":10},{"slot":1,"name":"Water Gun","pp":5},{"slot":2,"name":"Thunderbolt"}]})
         o=c.enrich(o)
         self.assertEqual(o["enemy_types"],["fire"])
+        self.assertEqual(c.species_ids[7]["types"],["water"])
+        self.assertEqual(c.species_ids[25]["name"],"PIKACHU")
         self.assertEqual(best_move(o)["name"],"Water Gun")
         self.assertNotIn("pp",o["moves"][2])
     def test_anchors_fail_closed(self):
