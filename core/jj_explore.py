@@ -17,13 +17,29 @@ def event_targets(live,rom_size,field,map_header=MAP_HEADER,object_base=OBJECTS,
     ptr=live.integer(map_header+4,4)
     if ptr%4:raise ValueError("events alignment")
     data=romread(ptr,20);count=data[1];warps=[]
+    # FireRed MapEvents: object, warp, coord, background counts,
+    # followed by four 32-bit ROM pointers. A ball sitting on a table
+    # commonly uses a background/signpost event, not a live object sprite.
+    bg_count=data[3]
     if count>64:raise ValueError("warp count")
+    if bg_count>64:raise ValueError("background event count")
     if count:
         raw=romread(u(data,8,4),count*8)
         for i in range(count):
             x,y=signed(raw,i*8),signed(raw,i*8+2)
             if not (0<=x<field.width and 0<=y<field.height):raise ValueError("warp location")
             warps.append({"kind":"warp","x":x,"y":y,"id":i,"destination":[raw[i*8+7],raw[i*8+6]]})
+    backgrounds=[]
+    if bg_count:
+        raw=romread(u(data,16,4),bg_count*12)
+        for i in range(bg_count):
+            off=i*12
+            x,y=signed(raw,off),signed(raw,off+2)
+            if not (0<=x<field.width and 0<=y<field.height):
+                raise ValueError("background event location")
+            # Preserve game-defined event kind; never infer item success from
+            # visual similarity. The ordinary A interaction is verified later.
+            backgrounds.append({"kind":"bg","x":x,"y":y,"id":i,"bg_kind":raw[off+5]})
     objects=live.read(object_base,36*16);npcs=[];facing=None
     for i in range(16):
         o=objects[i*36:(i+1)*36];flags=u(o,0,4)
@@ -35,7 +51,7 @@ def event_targets(live,rom_size,field,map_header=MAP_HEADER,object_base=OBJECTS,
             npcs.append({"kind":"npc","x":x,"y":y,"id":o[8],"gfx":o[5]})
     try:connections=crossings(live,rom_size,field,map_header=map_header,**({"vmap":vmap} if vmap is not None else {}))
     except (ValueError,LiveError,IndexError):connections=[]
-    return warps+npcs+connections,facing
+    return warps+npcs+backgrounds+connections,facing
 
 def event_key(field,event):
     return ":".join(map(str,(*field.map_id,event["kind"],event["id"],event["x"],event["y"])))
@@ -76,7 +92,7 @@ class Explorer:
             choices=options(field,occupied,events,attempted,blocked_tiles(meta,field.map_id))
             meta["native_event_probe"]={
                 "status":"EVENTS_READ",
-                "counts":{kind:sum(e["kind"]==kind for e in events) for kind in ("npc","warp","connection")},
+                "counts":{kind:sum(e["kind"]==kind for e in events) for kind in ("npc","warp","bg","connection")},
                 "reachable":len(set(c[1] for c in choices)),
                 "attempted":sum(event_key(field,e) in attempted for e in events),
                 "event_positions":[{"kind":e["kind"],"x":e["x"],"y":e["y"]} for e in events[:16]],
@@ -105,7 +121,7 @@ class Explorer:
         if not info or task not in ("explore","interact","exit"):return False
         f,_,occupied=candidate;events,_=info
         all_events=events
-        if task=="interact":events=[e for e in events if e["kind"]=="npc"]
+        if task=="interact":events=[e for e in events if e["kind"] in ("npc","bg")]
         elif task=="exit":events=[e for e in events if e["kind"] in ("warp","connection")]
         choices=options(f,occupied,events,meta.get("event_attempts",[]),blocked_tiles(meta,f.map_id),avoid_warps=all_events)
         if not choices:return False
@@ -140,7 +156,7 @@ class Explorer:
             if not path:return None
             action=path[0].upper();dx,dy=DIR[action];expected=(f.pos[0]+dx,f.pos[1]+dy);kind="move"
         frames=(probe_frames(meta,f.map_id,expected) if kind=="move" else (1 if action!="A" else 5))
-        return {"scene":"native_exploration","objective":("Interact with observed NPC" if event["kind"]=="npc" else "Travel toward observed connection" if event["kind"]=="connection" else "Approach observed warp"),"actions":[{"button":action,"frames":frames}],"review":False},(kind,expected)
+        return {"scene":"native_exploration","objective":("Interact with observed map event" if event["kind"] in ("npc","bg") else "Travel toward observed connection" if event["kind"]=="connection" else "Approach observed warp"),"actions":[{"button":action,"frames":frames}],"review":False},(kind,expected)
     def interrupt(self,meta,reason):
         """Discard a stale skill path without treating its objective as failed.
 
