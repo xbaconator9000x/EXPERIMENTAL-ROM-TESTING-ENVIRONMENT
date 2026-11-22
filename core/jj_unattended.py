@@ -141,6 +141,34 @@ def script_settle(meta,screen,*,limit=32):
             "actions":[{"button":"WAIT","frames":24}],"review":False}
 
 
+def legacy_script_resume_candidate(meta):
+    """Recognise one old checkpoint stranded after successful script recovery.
+
+    A historical navigation-exhausted label alone is insufficient: require a
+    recent actual A recovery and native text/script history on the same saved
+    checkpoint. The current native field is checked again by the live caller.
+    """
+    if not isinstance(meta,dict) or meta.get("recovery_resume"):
+        return False
+    review=meta.get("review",{})
+    if not isinstance(review,dict) or review.get("scene")!="native_navigation_exhausted":
+        return False
+    history=meta.get("history",[])
+    if not isinstance(history,list):return False
+    recent=[row for row in history[-12:] if isinstance(row,dict)]
+    recovered=any(row.get("source")=="review_recovery" and
+                 any(isinstance(a,dict) and a.get("button")=="A"
+                     for a in row.get("actions",[]))
+                 for row in recent)
+    script_seen=any(row.get("source") in ("native_text",
+                        "native_script_settle","fast_dialogue") for row in recent)
+    diagnostics=meta.get("native_diagnostics",{})
+    field_reason=(diagnostics.get("field_reason") if
+                  isinstance(diagnostics,dict) else None)
+    return recovered and script_seen and field_reason in (
+        "FIELD_STRUCTURES_VALID","FIELD_STRUCTURES_VALID_STALE_SCRIPT_BYTE")
+
+
 def rearm_after_script_recovery(meta,field,*,unlocked=False,visible_dialogue=False):
     """One-shot replan after *observed* dialogue completion.
 
