@@ -6,7 +6,7 @@ visible menu corroboration are mandatory. No direct input cursor mutation.
 """
 import hashlib
 from pathlib import Path
-from core.jj_fast import SHA, MAIN, PARTY, BATTLE, CTRL, SAVE_PTR, decode_party, u
+from core.jj_fast import SHA, SHA_V1033, MAIN, PARTY, BATTLE, CTRL, SAVE_PTR, decode_party, u
 from core.firered import span
 from core.rom_catalog import TYPES
 from core.live import LiveError
@@ -26,6 +26,17 @@ FINGERPRINTS={
     0x0802E439:"1116443a18d9ddafd403e4f6ba064850bb0f3a42fc7188dc7e6c038abf8f4255",
     0x0802EA11:"2c835b19645b5808f66eb1b2c50d4d5538b6543ddd9c1d0f5d781869f94253f1",
 }
+# v1.03.3 retains the original battle ABI and command callbacks, but changes
+# the move-menu callback executable span. Admit that changed span only for its
+# exact local ROM fingerprint; runtime flags/cursor/HP/PP corroboration remains
+# mandatory before any controller action.
+MOVE_CB_V1033="46cd710ef8d11f650386cc212b3e6e3e810a7eaee849970e59d5e995bac29020"
+
+def fingerprints_for(sha):
+    if sha==SHA:return FINGERPRINTS
+    if sha==SHA_V1033:return {**FINGERPRINTS,0x0802EA11:MOVE_CB_V1033}
+    return {}
+
 
 def anchors(data,addresses):
     # Scan aligned literal references without a Python loop over every word.
@@ -110,13 +121,14 @@ def move_rank(own,enemy,rows,disabled=0,capture=False):
 class BattleAdapter:
     def __init__(self,rom,sha,goal,catalog):
         self.callbacks=set();self.field_inventory=False;self.catalog=catalog
-        if sha!=SHA or "classic" not in goal.lower() or "modern" in goal.lower():return
+        fingerprints=fingerprints_for(sha)
+        if not fingerprints or "classic" not in goal.lower() or "modern" in goal.lower():return
         try:
             data=Path(rom).read_bytes()
             if hashlib.sha256(data).hexdigest()!=sha:return
             self.field_inventory=anchors(data,(SAVE_PTR,SAVE2))
             if not catalog or not anchors(data,(MAIN,PARTY,BATTLE,CTRL,FLAGS,DISABLE,ACTION_CURSOR,MOVE_CURSOR)):return
-            self.callbacks={a for a,fp in FINGERPRINTS.items() if hashlib.sha256(data[(a&~1)-0x08000000:(a&~1)-0x08000000+32]).hexdigest()==fp}
+            self.callbacks={a for a,fp in fingerprints.items() if hashlib.sha256(data[(a&~1)-0x08000000:(a&~1)-0x08000000+32]).hexdigest()==fp}
             if BATTLE_CB not in self.callbacks:self.callbacks.clear()
         except (OSError,ValueError):return
 
