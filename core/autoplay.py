@@ -37,7 +37,7 @@ from core.jj_tile_memory import refresh_on_verified_arrival, confirm_native_posi
 from core.jj_menus import MenuDriver,intent_from_battle
 from core.jj_runtime import NATIVE, animation_wait, record_field, count_decision, recovery_allowed
 from core.jj_connections import observe_arrival
-from core.jj_unattended import recovery, oscillation, field_hint, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id, bootstrap, vision_stall, script_settle, exceptional_vision, field_strategic_referral
+from core.jj_unattended import recovery, oscillation, field_hint, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id, bootstrap, vision_stall, script_settle, exceptional_vision, field_strategic_referral, rearm_after_script_recovery
 
 BUTTONS={"A":1,"B":2,"SELECT":4,"START":8,"RIGHT":16,"LEFT":32,"UP":64,"DOWN":128,"R":256,"L":512,"WAIT":0}
 SCHEMA={"type":"object","additionalProperties":False,"required":["scene","objective","actions","review"],"properties":{
@@ -422,6 +422,14 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
         if status!="INTERRUPTED":rgb=new_rgb
         if status in ("PROGRESS","INTERRUPTED"):
             if status=="PROGRESS":
+                old_review=meta.get("review",{})
+                if (isinstance(old_review,dict) and
+                        old_review.get("scene")=="native_script_locked"):
+                    # The first changed dialogue page only ends this attempt,
+                    # not the script. Replan once, after a fresh native witness
+                    # proves the dialogue has closed and control was released.
+                    meta["recovery_resume"]={"kind":"native_script_locked",
+                                             "phase":"pending"}
                 meta.pop("review",None)
                 meta.pop("script_settle",None)
                 meta.pop("event_goal",None)
@@ -490,6 +498,22 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                               verified=True,decision=meta["decisions"])
             if battle_before or field_before:meta.pop('menu_intent',None)
             menu_before=menus.snapshot(live,meta)
+            if (sha in JJ_RELEASES and isinstance(adapter,Adapter) and
+                    battle_before is None and menu_before is None and
+                    not meta.get("menu_intent")):
+                if rearm_after_script_recovery(
+                        meta,field_before,
+                        unlocked=adapter.reason in (
+                            "FIELD_STRUCTURES_VALID",
+                            "FIELD_STRUCTURES_VALID_STALE_SCRIPT_BYTE"),
+                        visible_dialogue=ordinary_dialogue(rgb) is not None):
+                    invalidate_action_batch(meta)
+                calibration=meta.get("recovery_resume",{})
+                if (isinstance(calibration,dict) and
+                        calibration.get("phase")=="calibrating" and
+                        field_before is not None and
+                        adapter.verified_field(field_before,meta)):
+                    meta.pop("recovery_resume",None)
             verified_party=None
             # A decoded party is an authoritative snapshot only after the
             # native reader verifies all slot checksums AND the separately
@@ -550,7 +574,11 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             # A structurally valid field is owned exclusively by native
             # route/event/scout skills, even before full movement calibration.
             # A visible dialogue, battle or menu is handled separately.
+            # Structural field readability is not the same as movement
+            # verification. Never call native exploration "exhausted" before
+            # the post-script field has been revalidated.
             field_owned=(sha in JJ_RELEASES and field_before is not None
+                and field_verified
                 and battle_before is None and menu_before is None
                 and not meta.get("menu_intent")
                 and ordinary_dialogue(rgb) is None)
@@ -688,7 +716,13 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 if learned:
                     decision=learned;source="field_recovery"
             if decision is None and field_before is not None and not adapter.verified_field(field_before,meta):
-                decision=bootstrap(meta,field_before,screen)
+                pending_resume=meta.get("recovery_resume",{})
+                post_dialogue=(isinstance(pending_resume,dict) and
+                               pending_resume.get("phase")=="calibrating" and
+                               pending_resume.get("map")==list(field_before[0].map_id)
+                               and adapter.reason=="FIELD_STRUCTURES_VALID")
+                decision=bootstrap(meta,field_before,screen,
+                                   post_dialogue=post_dialogue)
                 if decision:source="field_recovery"
             if decision is None and not field_owned:
                 decision=title_recovery(meta,rgb)
