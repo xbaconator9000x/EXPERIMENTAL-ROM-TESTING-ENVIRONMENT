@@ -22,7 +22,8 @@ with tempfile.TemporaryDirectory(prefix="operator-fixture-") as directory:
     operator=OperatorControl(directory,identity,runner,rom,sha,ack=lambda *x,**kw:responses.append(x))
     live=Live(runner,rom,sha)
     try:
-        live.step(0,900)
+        live.step(0,600)
+        live.step(0,300)
         live.step(1,6)
         assert live.integer(0x02000000,4)==0,"synthetic A event not native"
         meta={"decisions":0,"frames":906,"history":[]}
