@@ -6,13 +6,13 @@ milestone ledger, not an automatic release approval.
 import hashlib
 from pathlib import Path
 from core.live import LiveError
-from core.jj_fast import SHA,MAIN,PARTY,decode_party
+from core.jj_fast import ADMITTED_SHA256S,MAIN,PARTY,decode_party
 from core.jj_battle import BATTLE_CB
 from core.gen3_profiles import party_snapshot
 
 KEYS=("native_step","map_crossing","battle_win","wild_capture","healing",
       "native_move","checkpoint_reload")
-SOURCE_FILES=("autoplay.py","gen3_profiles.py","jj_fast.py","jj_battle.py",
+SOURCE_FILES=("autoplay.py","action_batch.py","gen3_profiles.py","jj_fast.py","jj_battle.py",
               "jj_menus.py","jj_explore.py","jj_connections.py","upstream_battle.py",
               "native_acceptance.py","firered.py","rom_catalog.py","live.py",
               "upstream_leafgreen/type_chart.py","upstream_leafgreen/move_kinds.py",
@@ -31,7 +31,7 @@ class Acceptance:
         self.profile=profile
         self.adapter=adapter
         self.battles=battles
-        self.enabled=bool(profile or (sha==SHA and adapter.admitted and BATTLE_CB in battles.callbacks))
+        self.enabled=bool(profile or (sha in ADMITTED_SHA256S and adapter.admitted and BATTLE_CB in battles.callbacks))
         identity={"rom":sha,"runner":runner_hash,"engine":engine_hash()}
         prev=meta.get("native_acceptance",{})
         if prev.get("identity")!=identity:
