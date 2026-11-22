@@ -20,7 +20,7 @@ from core.live import Live, LiveError
 from core.action_batch import prepare as prepare_action_batch, take as take_action_batch, observe as observe_action_batch, invalidate as invalidate_action_batch
 from core.gameplay import TYPES, clean_observation, policy, remember, memory_context
 from core.rom_catalog import try_catalog
-from core.jj_fast import Adapter, quick_dialogue, ordinary_dialogue, ADMITTED_SHA256S as JJ_RELEASES
+from core.jj_fast import Adapter, quick_dialogue, ordinary_dialogue, MAIN, ADMITTED_SHA256S as JJ_RELEASES
 from core.jj_battle import BattleAdapter
 from core.gen3_profiles import open_profile, VanillaField, VanillaBattle
 from core.native_acceptance import Acceptance
@@ -324,7 +324,16 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 decision=animation_wait(live,battles,battle_before,meta)
                 if decision:source="native_battle_wait"
             if decision is None and adapter.admitted and battle_before is None and not meta.get("menu_intent"):
-                fast=quick_dialogue(rgb,meta)
+                # Only let the deterministic dialogue reader act outside known
+                # battle callbacks or inventory/party menus. Some battle text
+                # resembles ordinary dialogue until the native battle is proved.
+                fast=None
+                if menu_before is None:
+                    try:
+                        if live.integer(MAIN+4,4) not in battles.callbacks:
+                            fast=quick_dialogue(rgb,meta)
+                    except LiveError:
+                        pass
                 if fast:decision,dialogue_page=fast;source="fast_dialogue"
                 else:
                     event=explorer.next(field_before,meta,events)
