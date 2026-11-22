@@ -32,6 +32,43 @@ class TestExplorer(unittest.TestCase):
         ex.finish(m,c,(changed,1,set()),cmd)
         self.assertEqual(m["map_transitions"][0]["to"],[3,4])
         self.assertNotIn("event_goal",m)
+    def test_native_short_tap_calibrates_then_reroutes_around_bumped_tile(self):
+        from core.jj_tile_memory import blocked_tiles,failures
+        f,npc,warp=self.setup()
+        c=(f,0x08001235,{(3,1)})
+        ex=Explorer(MockAdapter());meta={}
+        info=([npc,warp],"RIGHT")
+        self.assertTrue(ex.request(c,meta,info,"interact"))
+        first,cmd=ex.next(c,meta,info)
+        self.assertEqual(first["actions"],[{"button":"RIGHT","frames":1}])
+        ex.finish(meta,c,c,cmd)
+        self.assertEqual(failures(meta,f.map_id,(2,1)),1)
+        self.assertIn("event_goal",meta)
+        self.assertNotIn((2,1),blocked_tiles(meta,f.map_id))
+        retry,cmd=ex.next(c,meta,info)
+        self.assertEqual(retry["actions"],[{"button":"RIGHT","frames":12}])
+        ex.finish(meta,c,c,cmd)
+        self.assertIn((2,1),blocked_tiles(meta,f.map_id))
+        self.assertNotIn("event_goal",meta)
+        self.assertEqual(meta.get("event_attempts",[]),[])
+        self.assertTrue(ex.request(c,meta,info,"interact"))
+        new,cmd=ex.next(c,meta,info)
+        self.assertNotEqual(new["actions"][0]["button"],"RIGHT")
+        self.assertEqual(new["actions"][0]["frames"],1)
+
+    def test_unverified_noop_cannot_learn_or_retry_a_tile(self):
+        from core.jj_tile_memory import diagnostics
+        class UnprovedAdapter:
+            def verified_field(self,c,m):return False
+        f,npc,warp=self.setup();c=(f,0x08001235,{(3,1)})
+        ex=Explorer(UnprovedAdapter());meta={}
+        info=([npc,warp],"RIGHT")
+        self.assertTrue(ex.request(c,meta,info,"interact"))
+        first,cmd=ex.next(c,meta,info)
+        ex.finish(meta,c,c,cmd)
+        self.assertEqual(diagnostics(meta)["maps"],0)
+        self.assertNotIn("event_goal",meta)
+
     def test_previously_attempted_filtered(self):
         f,npc,warp=self.setup()
         self.assertTrue(all(c[4]["kind"]=="warp" for c in options(f,{(3,1)},[npc,warp],[event_key(f,npc)])))
