@@ -80,7 +80,7 @@ def choose_skill(model,goal,state,history,rgb):
                 "Do not include explanations or markdown. If a skill was rejected at the same screen, choose different arguments or a different skill."})
     raise ValueError("unreachable skill retry")
 
-def campaign(runner,rom,sha,checkout,folder,model,goal,max_decisions,should_stop=lambda:False,report=lambda *a:None):
+def campaign(runner,rom,sha,checkout,folder,model,goal,max_decisions,should_stop=lambda:False,report=lambda *a:None,control=None):
     folder=Path(folder).resolve();folder.mkdir(parents=True,exist_ok=True)
     path=folder/"upstream-progress.bin"
     identity={"rom":sha,"runner":digest(Path(runner).read_bytes()),"goal":goal,"model":model,"upstream":UPSTREAM_COMMIT}
@@ -98,17 +98,37 @@ def campaign(runner,rom,sha,checkout,folder,model,goal,max_decisions,should_stop
         segment_frames=120
         report("RUNNING",meta,rgb)
         while meta["decisions"]<max_decisions and not should_stop():
+            if control:
+                live,meta,rgb,_=control.serve(live,meta,rgb,should_stop)
+                session.transport.live=live
+                if should_stop():break
+                session.transport.should_stop=lambda: should_stop() or not control.pending.empty()
             if segment_frames+session.transport.max_frames>180000:
                 live.close();live=Live(runner,rom,sha);live.load_state(state)
                 session.transport.live=live;segment_frames=0
             observed=session.observe()
             turn=time.perf_counter()
             try:
-                name,args=choose_skill(model,goal,observed,meta["history"],rgb)
+                if control:
+                    from core.operator_model import interruptible_decision
+                    proposal,live,meta,rgb,stale,stopped=interruptible_decision(
+                        lambda:choose_skill(model,goal,observed,meta["history"],rgb),
+                        control,live,meta,rgb,should_stop)
+                    session.transport.live=live
+                    if stopped:break
+                    if stale:continue
+                    name,args=proposal
+                else:name,args=choose_skill(model,goal,observed,meta["history"],rgb)
             except (OSError,ValueError,KeyError,TypeError) as exc:
                 meta["model_error"]=type(exc).__name__
                 save_progress(path,identity,meta,state,rgb)
                 report("MODEL_UNAVAILABLE_OR_INVALID",meta,rgb)
+                if control:
+                    control.review=True
+                    live,meta,rgb,_=control.serve(live,meta,rgb,should_stop)
+                    session.transport.live=live
+                    if should_stop():break
+                    continue
                 return "MODEL_UNAVAILABLE_OR_INVALID",meta,rgb
             meta.pop("model_error",None)
             try:
@@ -158,7 +178,14 @@ def campaign(runner,rom,sha,checkout,folder,model,goal,max_decisions,should_stop
                                           if alternating else "upstream skill repeatedly rejected at same state" if rejected else "upstream skill stalled across eight unchanged decisions"),
                                 "screen":digest(rgb),"last_skills":[h["skill"] for h in recent]}
                 save_progress(path,identity,meta,state,rgb)
-                report("NEEDS_REVIEW",meta,rgb);return "NEEDS_REVIEW",meta,rgb
+                report("NEEDS_REVIEW",meta,rgb)
+                if control:
+                    control.review=True
+                    live,meta,rgb,_=control.serve(live,meta,rgb,should_stop)
+                    session.transport.live=live
+                    if should_stop():break
+                    continue
+                return "NEEDS_REVIEW",meta,rgb
         status="STOPPED" if should_stop() else "BUDGET_REACHED"
         report(status,meta,rgb);return status,meta,rgb
     finally:
