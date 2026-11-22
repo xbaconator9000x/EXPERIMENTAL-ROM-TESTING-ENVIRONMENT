@@ -115,6 +115,31 @@ def alternative(meta,screen,candidate,history):
         if not quarantined(meta,screen,a):return a
     return None
 
+def vision_stall(meta, field, *, limit=8):
+    """Stop repeated expensive inference on the same verified field map.
+
+    Fail closed with a checkpoint/review rather than heat the host while
+    vision repeatedly reverses ordinary movement. Native exploration does
+    not consume this budget; a verified map crossing or acquired party
+    clears the no-progress condition.
+    """
+    if not field or meta.get("objective_state",{}).get("phase")!="obtain_initial_party":
+        return False
+    history=meta.get("history",[])
+    if not isinstance(history,list):return False
+    map_id=list(field[0].map_id)
+    calls=0
+    for row in reversed(history):
+        if not isinstance(row,dict):break
+        position=row.get("field_after")
+        if not isinstance(position,dict) or position.get("map")!=map_id:break
+        if row.get("source")=="native_explore":break
+        if str(row.get("source","")).startswith("vision"):
+            calls+=1
+        if calls>=limit:return True
+    return False
+
+
 def quest_state(meta,field,party,obs=None,objective=None):
     """Keep a persistent goal above individual actions; only native facts
     can mark acquisition/transition milestones. Model facts stay hypotheses."""
