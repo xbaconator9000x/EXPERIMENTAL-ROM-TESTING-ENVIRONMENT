@@ -39,7 +39,7 @@ class NavigationMemoryTests(unittest.TestCase):
             before,after,button=(a,b,"DOWN") if i%2==0 else (b,a,"UP")
             rows.append(step(before,after,button,scene="native_dialogue"))
         self.assertEqual(recent_oscillation(rows,a),"DOWN")
-        self.assertEqual(recent_oscillation(rows,b),"UP") if False else None
+        self.assertIsNone(recent_oscillation(rows,b))
         meta={}
         # Recovery cannot act on stale *labels alone*.
         self.assertIsNone(propose(meta,a,rows,allowed=False))
