@@ -57,9 +57,15 @@ def choose_skill(model,goal,state,history,rgb):
             # without changing the scene. Quarantine an identical action after
             # two consecutive unchanged outcomes at this exact screen; do not
             # count a successful transition or a different observed screen.
-            unchanged_matches=[h for h in recent if
-                h.get("before")==current_screen and
-                h.get("after")==current_screen and
+            # A revisited screen is a new gameplay epoch after any witnessed
+            # transition. Old no-progress attempts must not quarantine a
+            # valid skill forever when the player returns to a menu or room.
+            epoch=[]
+            for h in reversed(recent):
+                if h.get("before")!=current_screen or h.get("after")!=current_screen:
+                    break
+                epoch.append(h)
+            unchanged_matches=[h for h in epoch if
                 h.get("skill")==name and h.get("args",{})==args]
             if len(unchanged_matches)>=2:
                 raise ValueError("repeated skill with no observed scene change")
