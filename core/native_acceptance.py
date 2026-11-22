@@ -14,7 +14,7 @@ KEYS=("native_step","map_crossing","battle_win","wild_capture","healing",
       "native_move","checkpoint_reload")
 SOURCE_FILES=("autoplay.py","action_batch.py","navigation_memory.py","party_knowledge.py","gameplay.py",
               "jj_unattended.py","jj_runtime.py","guidance.py","gen3_profiles.py","jj_fast.py","jj_battle.py",
-              "jj_menus.py","jj_explore.py","jj_world_model.py","jj_connections.py","upstream_battle.py",
+              "jj_menus.py","jj_explore.py","jj_world_model.py","jj_tile_memory.py","jj_connections.py","upstream_battle.py",
               "native_acceptance.py","firered.py","rom_catalog.py","live.py",
               "upstream_leafgreen/type_chart.py","upstream_leafgreen/move_kinds.py",
               "upstream_leafgreen/move_effects.py")
