@@ -81,7 +81,7 @@ def ordinary_dialogue(rgb):
     # Original script dialogue uses a white body; Jessie & James v1.03.3 also
     # uses a dark-blue interior with white glyphs. Require a full-width lower
     # backing edge to reject transitional animation and partial windows.
-    # The real v1.03.3 "Oh no! I forgot my Pokémon" reminder has a
+    # An authentic v1.03.3 scripted field reminder has a
     # near-black lower border. Earlier checks only admitted gray/navy
     # borders, misclassifying this actual scripted message as field.
     def lower_edge(i):
