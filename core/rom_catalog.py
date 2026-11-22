@@ -74,10 +74,12 @@ class Catalog:
             row=move_row(rom,i,move_data)
             if name_key(read_name(rom,move_names,13,i))!=name_key(name) or not row or row["type"]!=t or not row["power"]:
                 raise ValueError("Move table anchor mismatch")
-        self.species={};self.moves={};self.move_ids={}
+        self.species={};self.species_ids={};self.moves={};self.move_ids={}
         for i in range(1,412):
             name=name_key(read_name(rom,species_names,11,i));row=species_row(rom,i,species_data)
-            if name and row:self.species[name]=row if name not in self.species else None
+            if name and row:
+                self.species_ids[i]={"name":name,"types":list(row)}
+                self.species[name]=row if name not in self.species else None
         for i in range(1,355):
             name=name_key(read_name(rom,move_names,13,i));row=move_row(rom,i,move_data)
             if name and row:
