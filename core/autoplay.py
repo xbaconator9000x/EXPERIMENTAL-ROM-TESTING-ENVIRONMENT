@@ -32,7 +32,7 @@ from core.jj_tile_memory import refresh_on_verified_arrival
 from core.jj_menus import MenuDriver,intent_from_battle
 from core.jj_runtime import NATIVE, animation_wait, record_field, count_decision, recovery_allowed
 from core.jj_connections import observe_arrival
-from core.jj_unattended import recovery, oscillation, field_hint, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id, bootstrap, vision_stall
+from core.jj_unattended import recovery, oscillation, field_hint, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id, bootstrap, vision_stall, script_settle
 
 BUTTONS={"A":1,"B":2,"SELECT":4,"START":8,"RIGHT":16,"LEFT":32,"UP":64,"DOWN":128,"R":256,"L":512,"WAIT":0}
 SCHEMA={"type":"object","additionalProperties":False,"required":["scene","objective","actions","review"],"properties":{
@@ -294,6 +294,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             turn_started=time.perf_counter();model_elapsed=None
             adapter.attach(live)
             field_before=adapter.candidate(rgb)
+            if adapter.reason!="SCRIPT_CONTROL_LOCK":meta.pop("script_settle",None)
             battle_before=battles.snapshot(live)
             if battle_before and meta.get("event_goal"):
                 # A battle invalidates the previously calculated path.
@@ -429,6 +430,29 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     route=adapter.route_action(field_before,meta)
                     if route:decision,route_expected=route;source="native_route"
                     else:meta.pop("native_route",None)
+            if (decision is None and sha in JJ_RELEASES and
+                    adapter.reason=="SCRIPT_CONTROL_LOCK" and
+                    battle_before is None and menu_before is None):
+                # Screenshot-proven story reminders lock the field. Ordinary
+                # dialogue is advanced above; otherwise WAIT only. Never let
+                # field recovery or Qwen guess D-pad movement during a script.
+                waiting=script_settle(meta,screen)
+                if waiting is None:
+                    meta["review"]={
+                        "scene":"native_script_locked",
+                        "objective":meta.get("objective_state",{}).get("task","Complete active scripted interaction"),
+                        "reason":"script lock persisted without recognizable dialogue; requires verified interaction",
+                        "lock_probe":adapter.lock_probe}
+                    save_progress(path,identity,meta,live.save_state(),rgb)
+                    report("NEEDS_REVIEW",meta,rgb)
+                    if control:
+                        control.review=True
+                        live,meta,rgb,_=control.serve(live,meta,rgb,should_stop)
+                        if should_stop():return "STOPPED",meta,rgb
+                        acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
+                        continue
+                    return "NEEDS_REVIEW",meta,rgb
+                decision=waiting;source="native_script_settle"
             if decision is None and sha in JJ_RELEASES and battle_before is None and menu_before is None and not meta.get("menu_intent"):
                 decision=recovery(meta,screen,rgb,field_before,adapter.verified_field(field_before,meta))
                 if decision:source="field_recovery";meta.pop("event_goal",None);meta.pop("native_route",None)
@@ -548,7 +572,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     decision,batch_pending=prepare_action_batch(
                         decision,source,field_witness=nav_allowed,
                         battle=(battle_before is not None),menu=(menu_before is not None))
-            actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route","native_explore","native_menu","native_battle_wait","field_recovery","batch_navigation") else choose(decision,history,screen)
+            actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route","native_explore","native_menu","native_battle_wait","native_script_settle","field_recovery","batch_navigation") else choose(decision,history,screen)
             # A tested, direction-specific loop observation must override a
             # fresh model suggestion that simply retraces the same route.
             # Bounded recovery is tried first, above; when exhausted, park
