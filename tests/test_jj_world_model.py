@@ -43,7 +43,7 @@ class WorldModelTests(unittest.TestCase):
         warp=event("warp",4,4,0,[3,4])
         self.assertEqual(task({},[],[npc,warp]),"interact")
         healthy=[{"hp":20,"max_hp":30}]
-        self.assertEqual(task({},healthy,[npc,warp]),"exit")
+        self.assertEqual(task({},healthy,[npc,warp]),"explore")
         self.assertEqual(task({},healthy,[npc]),"explore")
         self.assertIsNone(task({},[{"hp":2,"max_hp":30}], [npc,warp]))
         self.assertIsNone(task({},[{"hp":0,"max_hp":30}], [npc,warp]))
@@ -68,6 +68,11 @@ class WorldModelTests(unittest.TestCase):
         meta["event_attempts"]=[meta["event_goal"]["key"]]
         self.assertTrue(explorer.request(candidate(),meta,info,"exit"))
         self.assertEqual(meta["event_goal"]["event"]["id"],3)
+        # In mixed exploration mode, revisit a story NPC after the known
+        # exits have already been explored; do not keep recrossing the same map.
+        meta["event_attempts"]=[]
+        self.assertTrue(explorer.request(candidate(),meta,info,"explore"))
+        self.assertEqual(meta["event_goal"]["event"]["kind"],"npc")
 
     def test_one_task_only_and_never_execute_an_unverified_action(self):
         c=candidate();npc=event("npc",4,2,4)
