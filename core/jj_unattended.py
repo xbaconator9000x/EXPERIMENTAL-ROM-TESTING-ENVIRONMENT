@@ -115,6 +115,30 @@ def alternative(meta,screen,candidate,history):
         if not quarantined(meta,screen,a):return a
     return None
 
+def script_settle(meta,screen,*,limit=8):
+    """Advance only GBA time when field controls are script-locked.
+
+    The caller first attempts a pixel-validated ordinary dialogue page.
+    Unknown script screens are NEVER interpreted as overworld navigation.
+    Repeated unchanged frames or too many waits fail closed for review,
+    preserving the previous native checkpoint and avoiding repeated Qwen
+    inferences against a control-locked scene.
+    """
+    state=meta.get("script_settle",{})
+    if not isinstance(state,dict):state={}
+    total=state.get("total",0)
+    same=state.get("same_screen",0) if state.get("screen")==screen else 0
+    if type(total) is not int or total<0:total=0
+    if type(same) is not int or same<0:same=0
+    if total>=limit or same>=3:
+        return None
+    meta["script_settle"]={"screen":screen,"total":total+1,
+                           "same_screen":same+1}
+    return {"scene":"native_script_settle",
+            "objective":"Allow locked field script or transition to finish without walking",
+            "actions":[{"button":"WAIT","frames":24}],"review":False}
+
+
 def vision_stall(meta, field, *, limit=8):
     """Stop repeated expensive inference on any verified field map.
 
@@ -211,6 +235,7 @@ def diagnostic(adapter,battles,menus,field,meta):
             "field_verified":adapter.verified_field(field,meta),
             "field_reason":getattr(adapter,"reason","unknown"),
             "field_lock_probe":getattr(adapter,"lock_probe",None),
+            "script_settle":meta.get("script_settle"),
             "movement_witnesses":len(meta.get("field_proof",{}).get("directions",[])),
             "battle_callbacks":len(battles.callbacks),"battle_witnesses":len(meta.get("battle_proof",[])),
             "catalog":battles.catalog is not None,"inventory":battles.field_inventory,
