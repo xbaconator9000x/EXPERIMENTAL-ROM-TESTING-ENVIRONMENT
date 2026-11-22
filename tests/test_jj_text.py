@@ -82,9 +82,27 @@ class TextEngineTests(unittest.TestCase):
         for l in (Live(kind=1),Live(active=0),Live(state=7),Live(ptr=0),
                   Live(font=10),Live(ptr=ROM_BASE+0x2000000)):
             self.assertIsNone(probe(l,16*1024*1024))
-    def test_unknown_memory_state_clears_guard(self):
+    def test_unadmitted_printer_uses_one_visually_verified_page_action(self):
+        meta={}
+        a,_=self.run_decide(Live(kind=0),meta)
+        self.assertEqual(a["scene"],"native_visual_text_advance")
+        self.assertEqual(a["actions"],[{"button":"A","frames":4}])
+        self.assertEqual(meta["native_text_probe"]["status"],"VISUAL_DIALOGUE_FALLBACK")
+        b,_=self.run_decide(Live(kind=0),meta)
+        self.assertIsNone(b)
+        self.assertEqual(meta["native_text_probe"]["status"],
+                         "REPEATED_VISUAL_PAGE_GUARDED")
+        changed=bytearray(image())
+        changed[(130*240+30)*3:(130*240+31)*3]=b"\\xff\\x00\\x00"
+        c,_=self.run_decide(Live(kind=0),meta,bytes(changed))
+        self.assertEqual(c["actions"],[{"button":"A","frames":4}])
+        d,_=self.run_decide(Live(kind=0),meta,image(choice=True))
+        self.assertIsNone(d)
+        self.assertNotEqual(meta["native_text_probe"]["status"],"VISUAL_DIALOGUE_FALLBACK")
+
+    def test_unknown_memory_state_without_visible_page_clears_guard(self):
         meta={"native_text_guard":{"token":"old"}}
-        d,_=self.run_decide(Live(kind=0),meta)
+        d,_=self.run_decide(Live(kind=0),meta,bytes(115200))
         self.assertIsNone(d)
         self.assertNotIn("native_text_guard",meta)
         self.assertEqual(meta["native_text_probe"]["status"],"NOT_ADMITTED")
