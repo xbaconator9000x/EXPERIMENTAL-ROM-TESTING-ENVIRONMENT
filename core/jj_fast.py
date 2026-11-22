@@ -96,7 +96,7 @@ def ordinary_dialogue(rgb):
         return sum(gray(row[x]) or navy(row[x]) or red(row[x]) or
                    (ink(row[x]) and (
                        sum(abs(a-b) for a,b in zip(row[x],outside))>=18 or
-                       (white_box and min(inside[x])>=232 and max(row[x])<70)))
+                       (white_box and min(inside[x])>=232 and max(row[x])<=40 and max(row[x])-min(row[x])<=4)))
                    for x in range(x0+3,x1-3))
     if not any(lower_edge(i)>=120 for i in range(152,160)):return None
     # Text in Jessie & James may be red rather than dark gray. Treat red
