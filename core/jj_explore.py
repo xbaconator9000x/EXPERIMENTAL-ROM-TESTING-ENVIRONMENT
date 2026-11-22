@@ -4,6 +4,7 @@ from core.firered import span
 from core.live import LiveError
 from core.jj_connections import crossings
 from core.jj_world_model import rank as rank_goal
+from core.jj_tile_memory import blocked_tiles, probe_frames, record as record_tile_step
 from vendor.pokemon_agent.pathfinding import find_path
 
 FACING={1:"DOWN",2:"UP",3:"LEFT",4:"RIGHT"}
@@ -39,9 +40,10 @@ def event_targets(live,rom_size,field,map_header=MAP_HEADER,object_base=OBJECTS,
 def event_key(field,event):
     return ":".join(map(str,(*field.map_id,event["kind"],event["id"],event["x"],event["y"])))
 
-def options(field,occupied,events,attempted):
+def options(field,occupied,events,attempted,blocked=()):
     """Rank reachable untried events, staying off unrelated warp tiles."""
     candidates=[]
+    blocked=set(blocked)
     warps={(e["x"],e["y"]) for e in events if e["kind"]=="warp"}
     for e in events:
         key=event_key(field,e)
@@ -50,9 +52,9 @@ def options(field,occupied,events,attempted):
         if e["kind"] in ("warp","connection"):goals=[(p,e.get("direction"))]
         else:goals=[((p[0]-dx,p[1]-dy),d) for d,(dx,dy) in DIR.items()]
         for target,direction in goals:
-            if target==field.pos:path=[]
+            if target==field.pos and target not in blocked:path=[]
             else:
-                path=find_path(field.pos,target,lambda x,y:field.passable(x,y) and (x,y) not in occupied and ((x,y) not in warps or (x,y)==target),field.width,field.height)
+                path=find_path(field.pos,target,lambda x,y:field.passable(x,y) and (x,y) not in occupied and (x,y) not in blocked and ((x,y) not in warps or (x,y)==target),field.width,field.height)
                 if path is None:continue
             candidates.append((len(path),key,tuple(target),direction,e,path))
     return sorted(candidates,key=lambda c:(c[0],c[1],c[2]))
@@ -67,7 +69,7 @@ class Explorer:
         if not info:return {}
         f,_,occupied=candidate;events,_=info
         tried=meta.get("event_attempts",[])
-        choices=options(f,occupied,events,tried)
+        choices=options(f,occupied,events,tried,blocked_tiles(meta,f.map_id))
         result=[];seen=set()
         for dist,key,target,facing,event,path in choices:
             if key in seen:continue
@@ -80,7 +82,7 @@ class Explorer:
         f,_,occupied=candidate;events,_=info
         if task=="interact":events=[e for e in events if e["kind"]=="npc"]
         elif task=="exit":events=[e for e in events if e["kind"] in ("warp","connection")]
-        choices=options(f,occupied,events,meta.get("event_attempts",[]))
+        choices=options(f,occupied,events,meta.get("event_attempts",[]),blocked_tiles(meta,f.map_id))
         if not choices:return False
         choices=[c for c in choices if c[5] or c[4]["kind"]!="warp"]
         if not choices:return False
@@ -100,6 +102,7 @@ class Explorer:
         if goal["map"]!=list(f.map_id) or goal["remaining"]<=0 or goal["event"] not in events:return None
         target=tuple(goal["target"]);event=goal["event"]
         warps={(e["x"],e["y"]) for e in events if e["kind"]=="warp"}
+        blocked=blocked_tiles(meta,f.map_id)
         if f.pos==target:
             if event["kind"]=="warp":return None
             if event["kind"]=="connection":
@@ -108,14 +111,25 @@ class Explorer:
                 action=goal["facing"];expected=f.pos;kind="face"
             else:action="A";expected=None;kind="interact"
         else:
-            path=find_path(f.pos,target,lambda x,y:f.passable(x,y) and (x,y) not in occupied and ((x,y) not in warps or (x,y)==target),f.width,f.height)
+            path=find_path(f.pos,target,lambda x,y:f.passable(x,y) and (x,y) not in occupied and (x,y) not in blocked and ((x,y) not in warps or (x,y)==target),f.width,f.height)
             if not path:return None
             action=path[0].upper();dx,dy=DIR[action];expected=(f.pos[0]+dx,f.pos[1]+dy);kind="move"
-        return {"scene":"native_exploration","objective":("Interact with observed NPC" if event["kind"]=="npc" else "Travel toward observed connection" if event["kind"]=="connection" else "Approach observed warp"),"actions":[{"button":action,"frames":1 if action!="A" else 5}],"review":False},(kind,expected)
+        frames=(probe_frames(meta,f.map_id,expected) if kind=="move" else (1 if action!="A" else 5))
+        return {"scene":"native_exploration","objective":("Interact with observed NPC" if event["kind"]=="npc" else "Travel toward observed connection" if event["kind"]=="connection" else "Approach observed warp"),"actions":[{"button":action,"frames":frames}],"review":False},(kind,expected)
     def finish(self,meta,before,after,command):
         goal=meta.get("event_goal")
         if not goal:return
         f=before[0];kind,expected=command
+        if kind=="move" and expected is not None:
+            outcome=record_tile_step(meta,before,after,command,
+                verified_before=self.adapter.verified_field(before,meta),
+                verified_after=self.adapter.verified_field(after,meta))
+            if outcome=="retry" and goal["remaining"]>1:
+                # A one-frame tap can turn the player without walking.
+                # Keep this target once, retry with a bounded 12-frame hold,
+                # then avoid that tile if movement is still unobserved.
+                goal["remaining"]-=1
+                return
         if after and after[0].map_id!=f.map_id:
             edges=meta.get("map_transitions",[])
             edge={"from":list(f.map_id),"to":list(after[0].map_id),"event":goal["event"]["id"]}
