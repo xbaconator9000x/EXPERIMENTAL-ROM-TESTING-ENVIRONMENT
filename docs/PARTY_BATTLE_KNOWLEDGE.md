@@ -16,6 +16,9 @@ Jessie & James v1.03.3 retains two distinct kinds of knowledge:
 
 The party reader checks Gen III personality-key XOR data, Pokémon checksums,
 individual slot bounds, Bad Egg flags, and an independent party-count witness.
+Separately, completed battle wins, confirmed captures and healing outcomes are
+remembered only when the native acceptance ledger witnesses them. Repeated
+observations are deduplicated; a new roster slot is not itself proof of a catch.
 An invalid read does not overwrite the last verified roster. Each new campaign
 retains its existing ROM/model/goal identity-locked checkpoint format; the
 knowledge is a bounded JSON field inside the same local checkpoint.
