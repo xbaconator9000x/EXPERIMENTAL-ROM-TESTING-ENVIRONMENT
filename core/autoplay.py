@@ -293,6 +293,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
         adapter=VanillaField(vanilla,sha)
         battles=VanillaBattle(vanilla,sha,catalog)
     meta["rom_profile"]=vanilla.name if vanilla else ("Jessie & James candidate runtime profile" if adapter.admitted else "vision-only")
+    meta["controller_mode"]="native_only" if getattr(model,"native_only",False) else "hybrid"
     acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
     explorer=Explorer(adapter)
     menus=MenuDriver(rom,sha,battles)
@@ -377,6 +378,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if battle_before and battle_before.get("callback") in meta.get("battle_proof",[]):
                 observe_battle(meta,battle_before,catalog,decision=meta["decisions"])
             meta["native_diagnostics"]=diagnostic(adapter,battles,menus,field_before,meta)
+            meta["native_diagnostics"]["controller_mode"]=meta["controller_mode"]
             if startup_report:
                 report("RUNNING",meta,rgb);last_report=time.monotonic();startup_report=False
             if isinstance(model,OllamaVision):
@@ -553,14 +555,17 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     # Qwen is not the next navigation skill. Only after 24
                     # native event approaches in each sweep can a strategic
                     # visual consultation suggest another *native* goal.
-                    if field_strategic_referral(meta,field_before):
+                    if (not getattr(model,"native_only",False)
+                            and field_strategic_referral(meta,field_before)):
                         strategic_field=True
                     else:
                         invalidate_action_batch(meta)
                         meta["review"]={
                             "scene":"native_navigation_exhausted",
                             "objective":meta.get("objective_state",{}).get("task","Advance story"),
-                            "reason":"native frontier and repeated event approaches exhausted after two sparse strategic referrals",
+                            "reason":("no reachable verified native event; visual model disabled"
+                                      if getattr(model,"native_only",False) else
+                                      "native frontier and repeated event approaches exhausted after two sparse strategic referrals"),
                             "native_event_probe":meta.get("native_event_probe"),
                             "native_scout":meta.get("native_scout"),
                             "native_revisit":meta.get("native_revisit"),
@@ -574,14 +579,17 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                             acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
                             continue
                         return "NEEDS_REVIEW",meta,rgb
-                if decision is None and sha in JJ_RELEASES and not strategic_field and not exceptional_vision(
-                        meta,field_before,getattr(adapter,"reason",""),
-                        battle=bool(battle_before),menu=bool(menu_before),
-                        dialogue=ordinary_dialogue(rgb) is not None):
+                if (decision is None and sha in JJ_RELEASES and not strategic_field
+                        and (getattr(model,"native_only",False) or not exceptional_vision(
+                            meta,field_before,getattr(adapter,"reason",""),
+                            battle=bool(battle_before),menu=bool(menu_before),
+                            dialogue=ordinary_dialogue(rgb) is not None))):
                     meta["review"]={
                         "scene":"unclassified_game_state",
                         "objective":meta.get("objective_state",{}).get("task","Advance story"),
-                        "reason":"unknown native state persists after one exceptional visual classification; no additional Qwen movement permitted",
+                        "reason":("no verified native action for this state; visual model disabled"
+                                  if getattr(model,"native_only",False) else
+                                  "unknown native state persists after one exceptional visual classification; no additional Qwen movement permitted"),
                         "field_reason":getattr(adapter,"reason","unknown")}
                     save_progress(path,identity,meta,live.save_state(),rgb)
                     report("NEEDS_REVIEW",meta,rgb)
@@ -740,7 +748,11 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 actions=alternative(meta,screen,field_before,history) or []
                 if actions:source="field_recovery";event_command=None;route_expected=None;menu_signature=None;battle_signature=None
             if not actions:
-                meta["review"]={"scene":decision["scene"],"objective":decision["objective"],"reason":"two-screen navigation loop exhausted" if loop_exhausted else ("model review" if decision["review"] else "no untried bounded action")}
+                meta["review"]={"scene":decision["scene"],"objective":decision["objective"],
+                                "reason":("native-only mode: unsupported state, no model invoked"
+                                          if getattr(model,"native_only",False) else
+                                          "two-screen navigation loop exhausted" if loop_exhausted else
+                                          ("model review" if decision["review"] else "no untried bounded action"))}
                 save_progress(path,identity,meta,live.save_state(),rgb)
                 report("NEEDS_REVIEW",meta,rgb)
                 if control:

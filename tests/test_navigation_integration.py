@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core.autoplay import play, save_progress, digest
+from core.jj_native_only import NativeOnly
 
 
 class LocalLive:
@@ -93,11 +94,11 @@ class CountingModel:
 
 
 class NativeRecoveryIntegrationTests(unittest.TestCase):
-    def run_sample(self,menu=False):
+    def run_sample(self,menu=False,model=None):
         rom_sha="a"*64
         initial=bytes((42,0,213))*38400
         screen=digest(initial)
-        model=CountingModel()
+        model=model if model is not None else CountingModel()
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
             runner=root/"runner";runner.write_bytes(b"native fake")
@@ -129,7 +130,14 @@ class NativeRecoveryIntegrationTests(unittest.TestCase):
                     LocalMenus.show_menu=False
             self.assertEqual(status,"BUDGET_REACHED")
             self.assertEqual(result["decisions"],2)
-            return result,model.calls
+            return result,model.calls if hasattr(model,"calls") else model.fallback_requests
+
+    def test_native_only_uses_existing_field_recovery_without_model(self):
+        native=NativeOnly("fake")
+        meta,calls=self.run_sample(model=native)
+        self.assertEqual(calls,0)
+        self.assertEqual(meta["controller_mode"],"native_only")
+        self.assertEqual(meta["history"][-1]["source"],"field_recovery")
 
     def test_known_wall_is_rerouted_without_another_llm_call(self):
         meta,calls=self.run_sample(menu=False)

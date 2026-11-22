@@ -9,6 +9,7 @@ import re
 import time
 from pathlib import Path
 from core.autoplay import OllamaVision, play, png, load_progress
+from core.jj_native_only import NativeOnly
 from core.guidance import newest_guide, claim_guide
 from windows.host import ROOT, LIBRARY, REPO, fingerprint
 from windows.queue_host import Remote
@@ -61,11 +62,12 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--queue",required=True);p.add_argument("--author",required=True);p.add_argument("--model",default="qwen3-vl:4b-instruct");p.add_argument("--fallback",default="qwen3-vl:2b-instruct")
     p.add_argument("--upstream-checkout",type=Path,help="Enable exact vanilla LeafGreen upstream v2 jobs")
+    p.add_argument("--native-only",action="store_true",help="Deterministic gameplay; disable Ollama/GPU inference")
     a=p.parse_args()
     if not RUNNER.is_file():raise SystemExit("Rebuild native runners first.")
     remote=Remote(a.queue,a.author,getpass.getpass("Private issue token: "),share_evidence=True)
     remote.verify()
-    model=OllamaVision(a.model,fallback=a.fallback)
+    model=NativeOnly(a.model) if a.native_only else OllamaVision(a.model,fallback=a.fallback)
     root=ROOT/"autoplay"/hashlib.sha256(a.queue.lower().encode()).hexdigest();root.mkdir(parents=True,exist_ok=True)
     # Windows exclusive lock prevents parallel controllers for this queue.
     import msvcrt
@@ -73,6 +75,7 @@ def main():
         if lock.tell()==0:lock.write(b"0");lock.flush()
         lock.seek(0);msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
         print("Continuous player polling private queue. Ctrl+C to stop.",flush=True)
+        if a.native_only:print("Native-only mode: Qwen disabled; unsupported states hold for review.",flush=True)
         retry_delay=15
         while True:
             try:
