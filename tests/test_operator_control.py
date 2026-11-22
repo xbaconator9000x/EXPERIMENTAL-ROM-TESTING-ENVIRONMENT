@@ -48,6 +48,39 @@ class OperatorRuntimeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 o.apply(14,validate_command(cmd("snapshot",{"name":"bedside"}),SHA),f,meta,rgb)
             self.assertEqual([e[1] for e in events],["EXECUTED"]*3)
+    def test_directional_operator_override_revalidates_after_verified_unlock(self):
+        with tempfile.TemporaryDirectory() as d:
+            identity={"rom":SHA,"runner":"b"*64,"model":"test","goal":"play"}
+            o=OperatorControl(d,identity,"runner","rom",SHA)
+            f=FakeLive()
+            meta={"decisions":1178,"frames":62312,"history":[],
+                  "review":{"scene":"unclassified_game_state"},
+                  "native_revisit":{"approaches":24},
+                  "field_strategic_referral":{"calls":2}}
+            cmd_down=validate_command(cmd("input",{"actions":[{"button":"DOWN","frames":16}]}),SHA)
+            _,meta,rgb,_=o.apply(25,cmd_down,f,meta,f.rgb())
+            self.assertEqual(meta["recovery_resume"],
+                {"kind":"native_script_locked","phase":"pending",
+                 "source":"operator_directional_override"})
+            # No navigation book is purged until native code confirms the
+            # map callback is valid and scripted control has released.
+            self.assertEqual(meta["native_revisit"]["approaches"],24)
+            self.assertEqual(meta["field_strategic_referral"]["calls"],2)
+            self.assertNotIn("review",meta)
+            # A-only commands are never admitted as field-movement evidence.
+            meta.pop("recovery_resume")
+            meta["review"]={"scene":"unclassified_game_state"}
+            _,meta,rgb,_=o.apply(26,validate_command(
+                cmd("input",{"actions":[{"button":"A","frames":4}]}),SHA),f,meta,rgb)
+            self.assertNotIn("recovery_resume",meta)
+            # Identical screenshots are also insufficient.
+            class StaticLive(FakeLive):
+                def step(self,k,n):self.steps.append((k,n))
+            stationary=StaticLive()
+            meta["review"]={"scene":"native_navigation_exhausted"}
+            _,meta,_,_=o.apply(27,cmd_down,stationary,meta,stationary.rgb())
+            self.assertNotIn("recovery_resume",meta)
+
     def test_pause_resume_and_stale_screen(self):
         with tempfile.TemporaryDirectory() as d:
             o=OperatorControl(d,{"rom":SHA},"runner","rom",SHA)
