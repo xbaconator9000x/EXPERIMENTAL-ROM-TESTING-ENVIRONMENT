@@ -5,6 +5,28 @@ from core.live import LiveError
 def history():
     return [{"before":"a" if i%2==0 else "b","after":"b" if i%2==0 else "a","scene":"hospital_room","actions":[{"button":"UP" if i%2==0 else "DOWN","frames":16}]} for i in range(12)]
 class Tests(unittest.TestCase):
+    def test_legacy_post_script_checkpoint_migrates_only_with_real_witnesses(self):
+        from core.jj_unattended import legacy_script_resume_candidate
+        legacy={"review":{"scene":"native_navigation_exhausted"},
+                "native_diagnostics":{"field_reason":"FIELD_STRUCTURES_VALID"},
+                "history":[
+                    {"source":"native_text","actions":[{"button":"WAIT","frames":24}]},
+                    {"source":"review_recovery","actions":[{"button":"A","frames":4}]},
+                    {"source":"native_script_settle","actions":[{"button":"WAIT","frames":24}]}]}
+        self.assertTrue(legacy_script_resume_candidate(legacy))
+        legacy["recovery_resume"]={"kind":"native_script_locked","phase":"pending"}
+        self.assertFalse(legacy_script_resume_candidate(legacy))
+        legacy.pop("recovery_resume")
+        legacy["native_diagnostics"]["field_reason"]="SCRIPT_CONTROL_LOCK"
+        self.assertFalse(legacy_script_resume_candidate(legacy))
+        legacy["native_diagnostics"]["field_reason"]="FIELD_STRUCTURES_VALID"
+        legacy["review"]["scene"]="native_navigation_exhausted"
+        legacy["history"][1]["actions"]=[{"button":"B","frames":4}]
+        self.assertFalse(legacy_script_resume_candidate(legacy))
+        legacy["history"][1]["actions"]=[{"button":"A","frames":4}]
+        legacy["review"]["scene"]="native_starter_navigation"
+        self.assertFalse(legacy_script_resume_candidate(legacy))
+
     def test_script_recovery_rearms_once_only_after_readable_unlocked_field(self):
         from core.jj_unattended import rearm_after_script_recovery, field_strategic_referral
         from core.firered import Field
