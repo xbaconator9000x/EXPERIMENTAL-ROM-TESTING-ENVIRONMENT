@@ -5,6 +5,26 @@ from core.live import LiveError
 def history():
     return [{"before":"a" if i%2==0 else "b","after":"b" if i%2==0 else "a","scene":"hospital_room","actions":[{"button":"UP" if i%2==0 else "DOWN","frames":16}]} for i in range(12)]
 class Tests(unittest.TestCase):
+    def test_starter_vision_budget_parks_no_progress_instead_of_burning_gpu(self):
+        from core.jj_unattended import vision_stall
+        from core.firered import Field
+        f=Field((43,1),(6,7),12,12,(0,)*144)
+        field=(f,0x08001235,set())
+        meta={"objective_state":{"phase":"obtain_initial_party"},"history":[]}
+        for i in range(7):
+            meta["history"].append({"source":"vision_compact","field_after":{"map":[43,1],"pos":[6,i]}})
+        self.assertFalse(vision_stall(meta,field))
+        meta["history"].append({"source":"vision_rich","field_after":{"map":[43,1],"pos":[6,8]}})
+        self.assertTrue(vision_stall(meta,field))
+        meta["history"].append({"source":"native_explore","field_after":{"map":[43,1],"pos":[7,8]}})
+        self.assertFalse(vision_stall(meta,field))
+        meta["history"].pop()
+        meta["history"].append({"source":"vision_compact","field_after":{"map":[43,2],"pos":[0,0]}})
+        self.assertFalse(vision_stall(meta,field))
+        meta["history"].pop()
+        meta["objective_state"]["phase"]="explore_and_advance_story"
+        self.assertFalse(vision_stall(meta,field))
+
     def test_recovery_escapes_loop_and_caps(self):
         m={"history":history()}
         self.assertEqual(cycle(m["history"],"a"),["a","b"])
