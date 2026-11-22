@@ -8,6 +8,7 @@ import hashlib
 from pathlib import Path
 from core.jj_battle import anchors,health_percent
 from core.jj_fast import ADMITTED_SHA256S,MAIN,PARTY,decode_party,u
+from core.party_knowledge import choose_verified_switch
 from core.firered import span
 from core.live import LiveError
 
@@ -60,7 +61,7 @@ def decode_emerald_bag(raw,inventory):
     # Normalize pocket to existing driver's internal semantic code.
     return {"stage":"bag","pocket":0 if pocket==0 else 2,"cursor":cursor,"rows":rows}
 
-def intent_from_battle(state,decision):
+def intent_from_battle(state,decision,catalog=None):
     if not state or state["stage"]!="battle_command" or decision["actions"]!=[{"button":"A","frames":5}]:return None
     reason=decision["objective"]
     own=state["own"]
@@ -71,9 +72,8 @@ def intent_from_battle(state,decision):
         item=select_item(state["bag"],"catch")
         if item:return {"purpose":"catch","item":item,"active":own["species"],"remaining":16,"phase":"list"}
     elif state["cursor"]==2 and reason=="Open party to switch safely":
-        choices=[p for p in state["party"] if p["species_id"]!=own["species"] and health_percent(p)>40]
-        if choices:
-            target=max(choices,key=lambda p:(health_percent(p),p["level"]))
+        target=choose_verified_switch(state["party"],own["species"],state["enemy"],catalog)
+        if target:
             return {"purpose":"switch","slot":target["slot"],"active":own["species"],"remaining":12,"phase":"list"}
     return None
 
