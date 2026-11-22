@@ -66,7 +66,7 @@ def recover(meta,rgb,*,press,delay,permit,visual=None,report=None):
                 # An unclassified choice gets visual assistance instead.
                 state["phase"]="VISUAL"
                 break
-            result=press(button,4 if button in ("A","B") else 12)
+            result=press(button,4 if button in ("A","B") else 16)
             state["attempts"]+=1
             state["last_button"]=button
             if changed(current,result):
