@@ -17,6 +17,7 @@ import urllib.error
 import zlib
 from pathlib import Path
 from core.live import Live, LiveError
+from core.action_batch import prepare as prepare_action_batch, take as take_action_batch, observe as observe_action_batch, invalidate as invalidate_action_batch
 from core.gameplay import TYPES, clean_observation, policy, remember, memory_context
 from core.rom_catalog import try_catalog
 from core.jj_fast import Adapter, quick_dialogue, ordinary_dialogue, SHA as JJ_SHA
@@ -32,7 +33,7 @@ from core.jj_unattended import recovery, quarantined, quarantine, alternative, q
 BUTTONS={"A":1,"B":2,"SELECT":4,"START":8,"RIGHT":16,"LEFT":32,"UP":64,"DOWN":128,"R":256,"L":512,"WAIT":0}
 SCHEMA={"type":"object","additionalProperties":False,"required":["scene","objective","actions","review"],"properties":{
     "scene":{"type":"string","maxLength":240},"objective":{"type":"string","maxLength":240},
-    "actions":{"type":"array","maxItems":3,"items":{"type":"object","additionalProperties":False,"required":["button","frames"],"properties":{"button":{"enum":list(BUTTONS)},"frames":{"type":"integer","minimum":1,"maximum":120}}}},
+    "actions":{"type":"array","maxItems":10,"items":{"type":"object","additionalProperties":False,"required":["button","frames"],"properties":{"button":{"enum":list(BUTTONS)},"frames":{"type":"integer","minimum":1,"maximum":120}}}},
     "review":{"type":"boolean"}}}
 # Model observations are optional; malformed proposals are ignored by the rules engine.
 OBSERVATION_SCHEMA={"type":"object","additionalProperties":False,"properties":{
@@ -76,7 +77,7 @@ def parse_decision(raw):
     for k in ("scene","objective"):
         if not isinstance(value[k],str) or not 0<len(value[k])<=240 or not value[k].strip() or any(ord(c)<32 for c in value[k]):
             raise ValueError("Invalid scene/objective")
-    if type(value["review"]) is not bool or type(value["actions"]) is not list or len(value["actions"])>3:raise ValueError("Invalid actions")
+    if type(value["review"]) is not bool or type(value["actions"]) is not list or len(value["actions"])>10:raise ValueError("Invalid actions")
     if not value["review"] and not value["actions"]:raise ValueError("No action")
     if value["review"] and value["actions"]:raise ValueError("Review must not include actions")
     for a in value["actions"]:
@@ -118,7 +119,7 @@ class OllamaVision:
         payload={"model":model,"stream":False,"format":SCHEMA if rich else COMPACT_SCHEMA,"keep_alive":"10m" if model==self.model else "0s","options":{"temperature":0.1,"num_predict":450 if rich else 240,"num_ctx":4096},
                  "messages":[{"role":"system","content":system},{"role":"user","content":context,"images":[base64.b64encode(png(rgb,3)).decode("ascii")]}]}
         if not rich:
-            payload["messages"][0]["content"]="Pokémon GBA player. Read the current image. Choose up to 3 short ordinary controller actions, not code. If native_field is present, you may supply field_target [x,y] on a passable tile using origin and grid; controller walks there and stops on unexpected state. If reachable_events are provided, field_task explore/interact/exit delegates an untried event approach. Report observation.stage and new location/quest facts if known. START title, A dialogue, D-pad movement. Follow the goal, notebook and objective_state; prioritize obtaining the initial Pokémon, then new NPCs and unexplored maps. Avoid repeated failed actions. Use review only for ending or genuine blockage. Return the required JSON."
+            payload["messages"][0]["content"]="Pokémon GBA player. Read the current image. For battles, dialogue, menus and choices, choose one short ordinary controller action. On clearly safe overworld paths, you may plan up to ten 1-24-frame directional steps; the runner checks after each step and stops the plan if anything changes unexpectedly. Never batch across interactions, encounters, warps, puzzles or choices. No code. If native_field is present, you may supply field_target [x,y] on a passable tile using origin and grid; controller walks there and stops on unexpected state. If reachable_events are provided, field_task explore/interact/exit delegates an untried event approach. Report observation.stage and new location/quest facts if known. START title, A dialogue, D-pad movement. Follow the goal, notebook and objective_state; prioritize obtaining the initial Pokémon, then new NPCs and unexplored maps. Avoid repeated failed actions. Use review only for ending or genuine blockage. Return the required JSON."
         req=urllib.request.Request("http://127.0.0.1:11434/api/chat",data=json.dumps(payload).encode(),headers={"Content-Type":"application/json"})
         with self.opener.open(req,timeout=self.timeout) as response:body=response.read(256*1024+1)
         if len(body)>256*1024:raise ValueError("Model reply too large")
@@ -239,6 +240,8 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
         save_progress(path,identity,meta0,state0,rgb0)
     meta={"decisions":0,"frames":0,"history":[]}
     if prior:meta,state,rgb=prior
+    # Older checkpoints are compatible: a queued plan is always optional and
+    # will be checked against its exact prior screenshot before reuse.
     catalog=try_catalog(rom,sha,goal)
     adapter=Adapter(rom,sha)
     battles=BattleAdapter(rom,sha,goal,catalog)
@@ -271,7 +274,9 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if should_stop():return "STOPPED",meta,rgb
             if control:
                 live,meta,rgb,changed=control.serve(live,meta,rgb,should_stop)
-                if changed:acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
+                if changed:
+                    invalidate_action_batch(meta)
+                    acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
                 if should_stop():return "STOPPED",meta,rgb
             turn_started=time.perf_counter();model_elapsed=None
             adapter.attach(live)
@@ -301,7 +306,13 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             screen=digest(rgb);history=meta["history"]
             blocked=[h["actions"] for h in history if h["before"]==screen==h["after"]]
             decision=guidance(meta,screen)
-            source="remote_guidance" if decision else "vision"
+            cached=None
+            if decision is None:
+                cached=take_action_batch(meta,rgb,allowed=(battle_before is None and menu_before is None and not (control and (control.paused or control.review))))
+                if cached:decision=cached
+            else:
+                invalidate_action_batch(meta)
+            source="batch_navigation" if cached else ("remote_guidance" if decision else "vision")
             route_expected=None;dialogue_page=None;battle_signature=None;event_command=None;menu_signature=None
             if decision is None:
                 menu=menus.action(menu_before,meta)
@@ -352,6 +363,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                         proposal,live,meta,rgb,stale,stopped=interruptible_decision(infer,control,live,meta,rgb,should_stop)
                         if stopped:return "STOPPED",meta,rgb
                         if stale:
+                            invalidate_action_batch(meta)
                             acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
                             continue
                         decision=proposal
@@ -394,7 +406,12 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             planned=policy(obs,goal,history,screen) if not decision["review"] and source not in ("remote_guidance","native_route","fast_dialogue","native_battle","native_explore","native_menu","native_battle_wait","field_recovery") else None
             if planned and planned[0]:
                 decision={**decision,"actions":planned[0],"objective":planned[1][:240]};source="pokemon_policy"
-            actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route","native_explore","native_menu","native_battle_wait","field_recovery") else choose(decision,history,screen)
+            batch_pending=None
+            if source.startswith("vision") and not decision["review"]:
+                decision,batch_pending=prepare_action_batch(decision,source,battle=(battle_before is not None),menu=(menu_before is not None))
+            actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route","native_explore","native_menu","native_battle_wait","field_recovery","batch_navigation") else choose(decision,history,screen)
+            if batch_pending and actions!=decision["actions"]:
+                batch_pending=None
             if actions and quarantined(meta,screen,actions):
                 actions=alternative(meta,screen,field_before,history) or []
                 if actions:source="field_recovery";event_command=None;route_expected=None;menu_signature=None;battle_signature=None
@@ -409,6 +426,8 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
                     continue
                 return "NEEDS_REVIEW",meta,rgb
+            if batch_pending:
+                meta["action_batch"]=batch_pending
             # Segment the native 200k-frame guard without losing game state.
             settle=150 if source=="fast_dialogue" else (150 if event_command and event_command[0] in ("interact","cross") else 16) if source in ("native_route","native_explore") else settle_frames(decision,source)
             cost=sum(a["frames"]+settle for a in actions)
@@ -424,6 +443,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 after=live.rgb()
                 state=live.save_state()
             except (LiveError,OSError):
+                invalidate_action_batch(meta)
                 # Preserve the exact pre-action checkpoint, not an advanced or
                 # reset game. Reproduce one time in an independent emulator.
                 incident={"before":screen,"actions":actions,"scene":decision["scene"],"settle":settle}
@@ -476,7 +496,11 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 meta["menu_intent"]["remaining"]-=1
                 if meta["menu_intent"]["remaining"]<=0:meta.pop("menu_intent",None)
             field_after=adapter.candidate(after)
-            if source.startswith("vision") or source in ("remote_guidance","field_recovery"):adapter.observe_move(field_before,field_after,actions,meta)
+            if source.startswith("vision") or source in ("remote_guidance","field_recovery","batch_navigation"):adapter.observe_move(field_before,field_after,actions,meta)
+            if meta.get("action_batch"):
+                proved=adapter.verified_field(field_before,meta)
+                field_ok=not proved or bool(field_after and adapter.verified_field(field_after,meta) and field_before[0].map_id==field_after[0].map_id and field_before[0].pos!=field_after[0].pos)
+                observe_action_batch(meta,rgb,after,field_ok=field_ok,dialogue=(ordinary_dialogue(after) is not None))
             record_field(meta,field_after,adapter.verified_field(field_after,meta))
             if source=="native_explore":explorer.finish(meta,field_before,field_after,event_command)
             observe_arrival(meta,field_after,adapter.verified_field(field_after,meta))
@@ -493,6 +517,8 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if battle_signature:entry["battle_signature"]=battle_signature
             if menu_signature:entry["menu_signature"]=menu_signature
             if source=="native_route":entry["expected_tile"]=list(route_expected)
+            if source=="batch_navigation":entry["batch_reuse"]=True
+            if meta.get("action_batch"):entry["batch_remaining"]=len(meta["action_batch"]["remaining"])
             if field_after and adapter.verified_field(field_after,meta):entry["field_after"]={"map":list(field_after[0].map_id),"pos":list(field_after[0].pos)}
             entry["elapsed_seconds"]=round(time.perf_counter()-turn_started,3)
             if model_elapsed is not None:entry["model_seconds"]=round(model_elapsed,3)
