@@ -32,6 +32,44 @@ class TestExplorer(unittest.TestCase):
         self.assertIsNone(explorer.scout(before,meta,None))
         self.assertIsNone(explorer.scout(None,meta,info))
 
+    def test_coordinate_script_corridor_allows_witnessed_exit_route(self):
+        # Coord scripts can occupy a one-tile doorway: they are trigger tiles,
+        # not walls. Ordinary warp tiles still cannot be crossed as transit.
+        f=Field((43,1),(0,1),6,3,tuple(
+            0 if y==1 else 0x400 for y in range(3) for x in range(6)))
+        warp={"kind":"warp","x":5,"y":1,"id":0,"destination":[43,2]}
+        coord={"kind":"coord","x":2,"y":1,"id":1}
+        info=([warp,coord],None)
+        choices=options(f,set(),[warp],[],avoid_warps=info[0])
+        self.assertEqual(len(choices),1)
+        self.assertEqual(choices[0][-1],["Right"]*5)
+        ex=Explorer(MockAdapter());meta={"native_party_count":3}
+        before=(f,0x08001235,set())
+        self.assertTrue(ex.request(before,meta,info,"exit"))
+        action,command=ex.next(before,meta,info)
+        self.assertEqual(action["actions"][0]["button"],"RIGHT")
+        self.assertEqual(command,("move",(1,1)))
+        mid=(Field(f.map_id,(1,1),f.width,f.height,f.tiles),
+             before[1],before[2])
+        ex.finish(meta,before,mid,command)
+        action,command=ex.next(mid,meta,info)
+        self.assertEqual(command,("move",(2,1)))
+        self.assertEqual(action["actions"][0]["button"],"RIGHT")
+
+    def test_coordinate_transit_prefers_safe_detour_and_never_crosses_warp(self):
+        f=Field((43,1),(0,1),5,3,(0,)*15)
+        exit_warp={"kind":"warp","x":4,"y":1,"id":1}
+        coord={"kind":"coord","x":2,"y":1,"id":2}
+        path=options(f,set(),[exit_warp],[],avoid_warps=[exit_warp,coord])[0][-1]
+        # A longer trigger-free walk is preferred over stepping on a script.
+        self.assertEqual(len(path),6)
+        self.assertNotEqual(path,["Right"]*4)
+        narrow=Field((43,1),(0,1),5,3,tuple(
+            0 if y==1 else 0x400 for y in range(3) for x in range(5)))
+        mid_warp={"kind":"warp","x":2,"y":1,"id":0}
+        self.assertEqual(options(narrow,set(),[exit_warp],[],
+                                 avoid_warps=[exit_warp,mid_warp,coord]),[])
+
     def test_native_reconsider_exhausts_24_actual_rom_event_approaches(self):
         from core.jj_explore import NATIVE_RETRY_APPROACHES
         from core.firered import Field
