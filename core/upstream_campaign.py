@@ -47,14 +47,17 @@ def choose_skill(model,goal,state,history,rgb):
             # Quarantine every rejected action at this exact screen, not only
             # the immediately preceding action. Alternating two rejected
             # skills must not evade the replay guard.
-            current_screen=digest(rgb)
             # A rejected skill is quarantined only during the current
             # uninterrupted scene epoch. Returning to the same RGB screen
             # after a witnessed transition is a fresh opportunity.
             current_screen=digest(rgb)
             epoch=[]
             for h in reversed(recent):
-                if h.get("before")!=current_screen or h.get("after")!=current_screen:
+                # Older records may omit `after` for a rejected skill.
+                # Only such stopped records can safely inherit `before`;
+                # successful actions without an after-witness break the epoch.
+                after=h.get("after",h.get("before") if h.get("result","").startswith("SKILL_STOPPED:") else None)
+                if h.get("before")!=current_screen or after!=current_screen:
                     break
                 epoch.append(h)
             if any(h.get("result","").startswith("SKILL_STOPPED:")
