@@ -65,15 +65,26 @@ class Tests(unittest.TestCase):
     def test_objective_verified_party(self):
         m={};q=quest_state(m,None,None,{"fact":"meet Jessie"},"find exit")
         self.assertEqual(q["phase"],"obtain_initial_party")
+        self.assertIn("Poké Ball",q["task"])
+        self.assertEqual(q["task_source"],"campaign_priority_pending_native_party_witness")
         quest_state(m,None,[{"hp":10,"max_hp":10}])
         self.assertEqual(q["phase"],"explore_and_advance_story")
         quest_state(m,None,[{"hp":1,"max_hp":10}])
         self.assertEqual(q["phase"],"restore_party_health")
+    def test_starter_goal_overrides_repeated_field_recovery_and_yields_after_party(self):
+        meta={}
+        for _ in range(4):
+            q=quest_state(meta,None,None,objective="Escape repeated field cycle using an untried direction")
+            self.assertIn("Poké Ball",q["task"])
+        q=quest_state(meta,None,[{"hp":12,"max_hp":15}],objective="Find exit")
+        self.assertEqual(q["phase"],"explore_and_advance_story")
+        self.assertEqual(q["task"],"Find exit")
+
     def test_quest_notebook_separates_model_hypotheses_from_witnessed_progress(self):
         meta={}
         q=quest_state(meta,None,None,{"fact":"I think the rocket ship sank"},"Find the ship")
         self.assertEqual(q["fact_source"],"model_hypothesis_not_a_verified_story_flag")
-        self.assertEqual(q["task_source"],"planner_proposal")
+        self.assertEqual(q["task_source"],"campaign_priority_pending_native_party_witness")
         self.assertEqual(q["milestones"],[])
         meta["party_knowledge"]={"verified_outcomes":[
             {"kind":"wild_capture","decision":12},
