@@ -174,7 +174,8 @@ def battle_advice(state,catalog):
                        "pp":pp,"type":row["type"],"power":row["power"],
                        "accuracy":row["accuracy"],"effectiveness":effect,
                        "safe_effect_verified":kind is not None})
-    return {"enemy_species":enemy.get("species"),"enemy_types":list(enemy["types"]),
+    capture_plan=capture_preference(state.get("party"),enemy,catalog,state.get("bag"),wild=state.get("wild",False))
+    return {"capture_preference":capture_plan,"enemy_species":enemy.get("species"),"enemy_types":list(enemy["types"]),
             "enemy_hp":enemy.get("hp"),"enemy_max_hp":enemy.get("max_hp"),
             "enemy_status":enemy.get("status"),
             "own_species":own.get("species"),"own_hp":own.get("hp"),
@@ -246,6 +247,8 @@ def capture_preference(party,enemy,catalog,bag,*,wild=True):
     current=[_known_species(catalog,m["species_id"]) for m in party]
     if target is None or any(x is None for x in current):
         return {"eligible":False,"reason":"unknown_type_coverage"}
+    if (isinstance(enemy.get("types"),list) and set(enemy["types"])!=set(target["types"])):
+        return {"eligible":False,"reason":"changed_or_conflicting_types"}
     current_types={t for mon in current for t in mon["types"]}
     novel=set(target["types"])-current_types
     return {"eligible":bool(novel),"reason":"new_type_coverage" if novel else "redundant_type_coverage",
