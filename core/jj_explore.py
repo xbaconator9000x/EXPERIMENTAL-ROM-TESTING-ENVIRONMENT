@@ -64,9 +64,19 @@ def options(field,occupied,events,attempted,blocked=(),avoid_warps=None):
 class Explorer:
     def __init__(self,adapter):self.adapter=adapter
     def inspect(self,candidate,meta):
-        if not self.adapter.verified_field(candidate,meta):return None
-        try:return event_targets(self.adapter.live,self.adapter.size,candidate[0],getattr(self.adapter,"map_header",MAP_HEADER),getattr(self.adapter,"objects",OBJECTS),getattr(self.adapter,"vmap",None))
-        except (ValueError,LiveError,IndexError):return None
+        if not self.adapter.verified_field(candidate,meta):
+            meta["native_event_probe"]={"status":"FIELD_NOT_VERIFIED"}
+            return None
+        try:
+            info=event_targets(self.adapter.live,self.adapter.size,candidate[0],getattr(self.adapter,"map_header",MAP_HEADER),getattr(self.adapter,"objects",OBJECTS),getattr(self.adapter,"vmap",None))
+            events,_=info
+            meta["native_event_probe"]={"status":"EVENTS_READ","counts":{kind:sum(e["kind"]==kind for e in events) for kind in ("npc","warp","connection")}}
+            return info
+        except (ValueError,LiveError,IndexError):
+            # Keep the reader fail-closed, but expose why deterministic
+            # event navigation was unavailable instead of silently using Qwen.
+            meta["native_event_probe"]={"status":"EVENTS_REJECTED"}
+            return None
     def describe(self,candidate,meta,info):
         if not info:return {}
         f,_,occupied=candidate;events,_=info
