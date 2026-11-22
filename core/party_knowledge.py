@@ -315,6 +315,35 @@ def knowledge_context(meta):
             "warning":"Historical party knowledge; never trust remembered PP/HP/menus for controller actions."}
 
 
+def choose_verified_switch(party,active_species,enemy,catalog):
+    """Rank healthy backups by checked Classic-type defence, then HP/level.
+
+    This is an informed heuristic about possible opponent STAB, NOT knowledge
+    of its current move, damage roll, ability, or hidden coverage. Unknown
+    species types revert to a conservative HP/level ranking.
+    """
+    if not valid_party(party) or not _int(active_species,1,411):
+        return None
+    choices=[m for m in party if m["species_id"]!=active_species
+             and m["hp"]>0 and 100*m["hp"]//m["max_hp"]>40]
+    if not choices:return None
+    types=enemy.get("types") if isinstance(enemy,dict) else None
+    if not isinstance(types,list) or not 1<=len(types)<=2 or any(t not in ATTACK_TYPES for t in types):
+        types=None
+    def rank(m):
+        health=100*m["hp"]//m["max_hp"]
+        typed=_known_species(catalog,m["species_id"])
+        worst=None
+        if types and typed:
+            rates=[classic_multiplier(t,typed["types"]) for t in types]
+            if all(r is not None for r in rates):
+                worst=max(rates)
+        # Unknown means neutral rather than claiming an actual resistance.
+        if worst is None:worst=1.0
+        return (-worst,health,m["level"],-m["slot"])
+    return max(choices,key=rank)
+
+
 def capture_preference(party,enemy,catalog,bag,*,wild=True):
     """Conservative roster-building intent, not a raw throw command."""
     if not wild:return {"eligible":False,"reason":"trainer_battle"}
