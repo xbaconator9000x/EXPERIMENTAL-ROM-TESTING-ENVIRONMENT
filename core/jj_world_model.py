@@ -105,9 +105,9 @@ def task(meta,party=None,events=None):
     if not alive:return "explore"
     if not any(m["hp"]>0 for m in alive):return None
     if max(m["hp"]/m["max_hp"] for m in alive)<0.25:return None
-    if not events:return "explore"
-    if any(isinstance(e,dict) and e.get("kind") in ("warp","connection") for e in events):
-        return "exit"
+    # Explore is a *mixed* skill: prefer a genuinely unvisited exit, but
+    # inspect reachable story NPCs before backtracking through old exits.
+    # Explicit 'exit' intent remains available from the model when needed.
     return "explore"
 
 
@@ -137,7 +137,12 @@ def rank(meta,choices,party_count,*,current_map=None,task_name="explore"):
         if party_count==0:purpose=0 if kind=="npc" else 1
         elif task_name=="interact":purpose=0 if kind=="npc" else 3
         elif task_name=="exit":purpose=0 if kind in ("warp","connection") else 3
-        else:purpose=0 if kind in ("warp","connection") else 1
+        else:
+            # New destinations expand the known world; afterward check
+            # untried NPCs, then revisit previously connected exits.
+            if kind in ("warp","connection") and dest and dest not in seen:purpose=0
+            elif kind=="npc":purpose=1
+            else:purpose=2
         # Prefer new map destinations, then less-repeated edges; never claim
         # a warp is successful just because it was selected as a destination.
         novelty=0 if kind in ("warp","connection") and dest is not None and dest not in seen else 1
