@@ -209,8 +209,16 @@ def quest_state(meta,field,party,obs=None,objective=None):
         q["task"]="Find the Poké Ball in the starting bedroom, approach it, face it and press A; verify a Pokémon is acquired."
         q["task_source"]="campaign_priority_pending_native_party_witness"
     elif isinstance(objective,str) and objective:
-        q["task"]=objective[:240]
-        q["task_source"]="planner_proposal"
+        # A finished starter objective must not be replaced by an internal
+        # wait/loop-recovery instruction as the player's strategic task.
+        if (q.get("phase")=="explore_and_advance_story" and
+                (objective.startswith("Allow locked field script") or
+                 objective.startswith("Escape repeated field cycle"))):
+            q["task"]="Find the next verified story interaction or map exit."
+            q["task_source"]="campaign_priority_after_party"
+        else:
+            q["task"]=objective[:240]
+            q["task_source"]="planner_proposal"
     q["milestones"]=q["milestones"][-24:]
     return q
 

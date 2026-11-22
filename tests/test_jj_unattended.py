@@ -113,6 +113,14 @@ class Tests(unittest.TestCase):
         self.assertEqual(q["phase"],"explore_and_advance_story")
         quest_state(m,None,[{"hp":1,"max_hp":10}])
         self.assertEqual(q["phase"],"restore_party_health")
+    def test_party_observed_discards_internal_stale_script_wait_objective(self):
+        m={}
+        quest_state(m,None,[{"hp":12,"max_hp":15}])
+        q=quest_state(m,None,None,objective="Allow locked field script or transition to finish without walking")
+        self.assertEqual(q["phase"],"explore_and_advance_story")
+        self.assertEqual(q["task"],"Find the next verified story interaction or map exit.")
+        self.assertEqual(q["task_source"],"campaign_priority_after_party")
+
     def test_starter_goal_overrides_repeated_field_recovery_and_yields_after_party(self):
         meta={}
         for _ in range(4):

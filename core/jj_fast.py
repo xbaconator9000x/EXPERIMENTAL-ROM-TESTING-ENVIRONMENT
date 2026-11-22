@@ -151,7 +151,7 @@ class Adapter:
         self.admitted=all(anchored(x) for x in (SAVE_PTR,MAP_HEADER,VMAP,MAIN,OBJECTS,SCRIPT,FADE,PARTY))
     def attach(self,live):
         self.live=live
-    def candidate(self,rgb):
+    def candidate(self,rgb,meta=None):
         self.lock_probe=None
         if not self.admitted:return None
         if ordinary_dialogue(rgb):self.reason="DIALOGUE_ACTIVE";return None
@@ -165,9 +165,47 @@ class Adapter:
             # evidence. A real story reminder is allowed to lock movement;
             # the dialogue handler must advance that message instead.
             self.lock_probe={"script_active":script_active,"script_context2_active":context2_active}
-            if script_active or context2_active:self.reason="SCRIPT_CONTROL_LOCK";return None
-            p=Profile(self.sha,SAVE_PTR,MAP_HEADER,VMAP,MAIN+4,cb,((SCRIPT,1,255,0),(SCRIPT_CONTEXT2,1,255,0)))
+            # This release can leave SCRIPT nonzero even when the operator
+            # demonstrably moved on a previously verified map. Do not turn
+            # that single byte into an indefinite wait. Re-admit ONLY after
+            # a guarded operator input plus recent native field witnesses,
+            # or an already re-admitted map/callback. Context2 still locks.
+            token=meta.get("stale_script_field") if isinstance(meta,dict) else None
+            trusted_token=(isinstance(token,dict) and token.get("callback")==cb)
+            witnessed=False
+            if (script_active and not context2_active and not trusted_token
+                    and isinstance(meta,dict) and meta.get("operator_last_action")=="input"):
+                previous=meta.get("last_native_field")
+                now=meta.get("decisions")
+                rows=meta.get("history",[])
+                if (isinstance(previous,dict) and isinstance(previous.get("map"),list)
+                        and isinstance(previous.get("pos"),list) and type(now) is int
+                        and isinstance(rows,list)):
+                    positions=set()
+                    for h in rows[-32:]:
+                        if not isinstance(h,dict) or h.get("source")!="native_explore":continue
+                        f=h.get("field_after")
+                        d=h.get("decision")
+                        if (isinstance(f,dict) and f.get("map")==previous["map"]
+                                and isinstance(f.get("pos"),list) and len(f["pos"])==2
+                                and type(d) is int and 0<=now-d<=32):
+                            positions.add(tuple(f["pos"]))
+                    witnessed=len(positions)>=2
+            bypass=bool(script_active and not context2_active and (trusted_token or witnessed))
+            if context2_active or (script_active and not bypass):
+                self.reason="SCRIPT_CONTROL_LOCK";return None
+            locks=((SCRIPT_CONTEXT2,1,255,0),) if bypass else ((SCRIPT,1,255,0),(SCRIPT_CONTEXT2,1,255,0))
+            p=Profile(self.sha,SAVE_PTR,MAP_HEADER,VMAP,MAIN+4,cb,locks)
             field=Reader(l,p).snapshot()
+            if bypass:
+                if trusted_token:
+                    permitted=token.get("map")==list(field.map_id)
+                else:
+                    previous=meta["last_native_field"]
+                    permitted=(previous["map"]==list(field.map_id)
+                               and previous["pos"]!=list(field.pos))
+                if not permitted:
+                    self.reason="SCRIPT_CONTROL_LOCK";return None
             objects=l.read(OBJECTS,36*16)
             players=[];occupied=set()
             for i in range(16):
@@ -179,7 +217,13 @@ class Adapter:
                     players.append((x,y))
                 elif 0<=x<field.width and 0<=y<field.height:occupied.add((x,y))
             if players!=[field.pos]:self.reason="PLAYER_POSITION_MISMATCH";return None
-            self.reason="FIELD_STRUCTURES_VALID"
+            if bypass:
+                if not trusted_token:
+                    meta["stale_script_field"]={"callback":cb,"map":list(field.map_id),
+                        "source":"operator_input_plus_native_movement"}
+                self.reason="FIELD_STRUCTURES_VALID_STALE_SCRIPT_BYTE"
+            else:
+                self.reason="FIELD_STRUCTURES_VALID"
             return field,cb,occupied
         except (LiveError,ValueError,IndexError):self.reason="FIELD_READ_REJECTED";return None
     def observe_move(self,before,after,actions,meta):
@@ -193,8 +237,16 @@ class Adapter:
         if proof.get("callback")!=cb:proof={"callback":cb,"directions":[]};meta["field_proof"]=proof
         if direction not in proof["directions"]:proof["directions"].append(direction)
     def verified_field(self,candidate,meta):
+        if not candidate:return False
         proof=meta.get("field_proof",{})
-        return bool(candidate and candidate[1]==proof.get("callback") and len(set(proof.get("directions",[])))>=2)
+        if candidate[1]==proof.get("callback") and len(set(proof.get("directions",[])))>=2:return True
+        # An operator-recovered field is verified by independently witnessed
+        # native steps plus a changed, fully checked player position. Only the
+        # SAME admitted map/callback can reuse it; no other field inherits it.
+        recovered=meta.get("stale_script_field",{})
+        return bool(isinstance(recovered,dict) and
+                    recovered.get("callback")==candidate[1] and
+                    recovered.get("map")==list(candidate[0].map_id))
     def structured(self,candidate,meta):
         if not self.verified_field(candidate,meta):return None
         f,cb,objects=candidate

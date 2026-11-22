@@ -1,6 +1,7 @@
 import struct
 import unittest
-from core.jj_fast import ordinary_dialogue,quick_dialogue,decode_party,ORDERS,Adapter,SHA,MAIN,SCRIPT,FADE
+from unittest.mock import patch
+from core.jj_fast import ordinary_dialogue,quick_dialogue,decode_party,ORDERS,Adapter,SHA,MAIN,SCRIPT,FADE,OBJECTS
 from core.firered import Field
 
 def frame(choice=False,center=False,navy=False,blank=False,furniture=False):
@@ -95,6 +96,56 @@ class FastTests(unittest.TestCase):
             self.assertIsNone(a.candidate(bytes(115200)))
             self.assertEqual(a.reason,"SCRIPT_CONTROL_LOCK")
             self.assertEqual(a.lock_probe,{"script_active":bool(script),"script_context2_active":bool(fade)})
+
+    def test_stale_script_flag_recovered_only_by_verified_operator_movement(self):
+        # Synthetic regression for v1.03.3 decision 989: native movement was
+        # witnessed before a manual input, yet SCRIPT remained nonzero.
+        class FakeLive:
+            def __init__(self,script=1,context2=0,frozen=False):
+                self.script,self.context2,self.frozen=script,context2,frozen
+            def integer(self,address,size):
+                return {MAIN+4:0x08000001,SCRIPT:self.script,FADE:self.context2}.get(address,0)
+            def read(self,address,size):
+                if address!=OBJECTS or size!=36*16:raise AssertionError("unexpected read")
+                objects=bytearray(size)
+                struct.pack_into("<I",objects,0,0x10101 if self.frozen else 0x10001)
+                struct.pack_into("<hh",objects,16,10,13)
+                return bytes(objects)
+        field=Field((43,1),(3,6),12,12,(0,)*144)
+        meta={"decisions":989,"operator_last_action":"input",
+              "last_native_field":{"map":[43,1],"pos":[4,3]},
+              "history":[
+                  {"decision":977,"source":"native_explore","field_after":{"map":[43,1],"pos":[4,6]}},
+                  {"decision":978,"source":"native_explore","field_after":{"map":[43,1],"pos":[4,5]}},
+                  {"decision":980,"source":"native_explore","field_after":{"map":[43,1],"pos":[4,3]}}]}
+        def candidate(m,live):
+            a=Adapter("unused","wrong");a.admitted=True;a.size=0x10000;a.attach(live)
+            with patch("core.jj_fast.Reader") as reader:
+                reader.return_value.snapshot.return_value=field
+                answer=a.candidate(bytes(115200),m)
+                return a,answer,reader
+        a,out,reader=candidate(None,FakeLive())
+        self.assertIsNone(out)
+        self.assertEqual(a.reason,"SCRIPT_CONTROL_LOCK")
+        self.assertFalse(reader.called)
+        a,out,_=candidate({**meta,"operator_last_action":"status"},FakeLive())
+        self.assertIsNone(out)
+        a,out,_=candidate(meta,FakeLive())
+        self.assertIsNotNone(out)
+        self.assertTrue(a.verified_field(out,meta))
+        self.assertEqual(a.reason,"FIELD_STRUCTURES_VALID_STALE_SCRIPT_BYTE")
+        self.assertEqual(meta["stale_script_field"]["source"],"operator_input_plus_native_movement")
+        # Once recovered, the same checked map/callback can navigate further
+        # without re-running the manual override.
+        meta.pop("operator_last_action")
+        self.assertIsNotNone(candidate(meta,FakeLive())[1])
+        self.assertIsNone(candidate(meta,FakeLive(context2=1))[1])
+        self.assertIsNone(candidate(meta,FakeLive(frozen=True))[1])
+        with patch("core.jj_fast.Reader") as reader:
+            reader.return_value.snapshot.return_value=Field((43,2),(3,6),12,12,(0,)*144)
+            self.assertIsNone(a.candidate(bytes(115200),meta))
+        # Visually confirmed dialogue always wins over stale-script recovery.
+        self.assertIsNone(a.candidate(frame(),meta))
 
     def test_native_party_checksum(self):
         p=party();m=decode_party(p)[0];self.assertEqual((m["species_id"],m["hp"],m["moves"][0]),(19,18,33))

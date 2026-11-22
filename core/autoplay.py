@@ -293,7 +293,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 if should_stop():return "STOPPED",meta,rgb
             turn_started=time.perf_counter();model_elapsed=None
             adapter.attach(live)
-            field_before=adapter.candidate(rgb)
+            field_before=adapter.candidate(rgb,meta)
             if getattr(adapter,"reason",None)!="SCRIPT_CONTROL_LOCK":meta.pop("script_settle",None)
             battle_before=battles.snapshot(live)
             if battle_before and meta.get("event_goal"):
@@ -669,7 +669,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             elif meta.get("menu_intent") and source.startswith("vision"):
                 meta["menu_intent"]["remaining"]-=1
                 if meta["menu_intent"]["remaining"]<=0:meta.pop("menu_intent",None)
-            field_after=adapter.candidate(after)
+            field_after=adapter.candidate(after,meta)
             if source.startswith("vision") or source in ("remote_guidance","field_recovery","batch_navigation"):adapter.observe_move(field_before,field_after,actions,meta)
             if meta.get("action_batch"):
                 proved=adapter.verified_field(field_before,meta)
