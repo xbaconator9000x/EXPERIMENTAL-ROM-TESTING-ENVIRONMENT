@@ -134,7 +134,15 @@ def vision_stall(meta, field, *, limit=8):
         position=row.get("field_after")
         if not isinstance(position,dict) or position.get("map")!=map_id:break
         if row.get("source")=="native_explore":break
-        if str(row.get("source","")).startswith("vision"):
+        # Dialogue, menus and battles are meaningful interactions rather
+        # than aimless field navigation. Never exhaust a movement budget by
+        # reading a story conversation or selecting a battle command.
+        if row.get("observed_stage") in ("dialogue","menu","battle_command","battle_moves","party","bag"):
+            break
+        actions=row.get("actions",[])
+        if str(row.get("source","")).startswith("vision") and (
+                not isinstance(actions,list) or
+                any(isinstance(a,dict) and a.get("button") in ("UP","DOWN","LEFT","RIGHT") for a in actions)):
             calls+=1
         if calls>=limit:return True
     return False
