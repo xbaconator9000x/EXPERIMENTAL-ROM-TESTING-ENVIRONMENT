@@ -8,6 +8,7 @@ Only exact SHA-admitted caller contexts may propose controller input.
 """
 import hashlib
 from core.live import LiveError
+from core.jj_fast import ordinary_dialogue
 
 # FireRed US v1.0 symbol reference, 40Cakes/pokebot-gen3 f14ab79:
 # sTextPrinters at 02020034; sMessageBoxType at 0203709C.
@@ -79,8 +80,25 @@ def decide(live,rgb,meta,rom_size,*,script_locked=False,recognized=False):
     if not (script_locked or recognized):return None
     p=probe(live,rom_size)
     if p is None:
+        # Modified Jessie & James dialogue may release/reconfigure the vanilla
+        # printer before closing its visible page. A native script lock plus a
+        # STRICT full-width dialogue witness can still justify one ordinary A
+        # press; never infer a choice from a bare lock or old page memory.
+        page=ordinary_dialogue(rgb) if (script_locked or recognized) else None
+        if page is not None and not floating_choice(rgb):
+            prior=meta.get("native_visual_text_guard",{})
+            if isinstance(prior,dict) and prior.get("page")==page:
+                meta["native_text_probe"]={"status":"REPEATED_VISUAL_PAGE_GUARDED"}
+                return None
+            meta["native_visual_text_guard"]={"page":page}
+            meta["native_text_probe"]={"status":"VISUAL_DIALOGUE_FALLBACK"}
+            meta.pop("native_text_guard",None)
+            return {"scene":"native_visual_text_advance",
+                    "objective":"Advance native-confirmed full-width dialogue page",
+                    "actions":[{"button":"A","frames":4}],"review":False}
         meta["native_text_probe"]={"status":"NOT_ADMITTED"}
         meta.pop("native_text_guard",None)
+        meta.pop("native_visual_text_guard",None)
         return None
     if floating_choice(rgb):
         meta["native_text_probe"]={"status":"CHOICE_OR_UNSAFE_PANEL"}
