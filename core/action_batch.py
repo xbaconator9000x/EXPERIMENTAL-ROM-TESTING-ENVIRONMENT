@@ -24,15 +24,17 @@ def prepare(decision, source, *, battle=False, menu=False):
     """
     actions = decision.get("actions")
     observed = decision.get("observation") or {}
-    if (not source.startswith("vision") or battle or menu
-            or decision.get("review") or not isinstance(observed, dict)
-            or observed.get("stage") != "field"
-            or not isinstance(actions, list) or not 2 <= len(actions) <= MAX_BATCH):
+    if not source.startswith("vision") or decision.get("review") or not isinstance(actions, list) or len(actions) <= 1:
         return decision, None
-    if any(not isinstance(a, dict) or a.get("button") not in MOVEMENT
-           or type(a.get("frames")) is not int or not 1 <= a["frames"] <= 24
-           for a in actions):
-        return decision, None
+    safe_field = (not battle and not menu and isinstance(observed, dict)
+                  and observed.get("stage") == "field" and len(actions) <= MAX_BATCH
+                  and all(isinstance(a, dict) and a.get("button") in MOVEMENT
+                          and type(a.get("frames")) is int and 1 <= a["frames"] <= 24
+                          for a in actions))
+    if not safe_field:
+        # Unverified multi-action menus and battles must never be blindly
+        # executed between observations. Verified native menus are unaffected.
+        return {**decision, "actions": [dict(actions[0])]}, None
     queued = {
         "version": 1,
         "scene": decision["scene"][:240],
