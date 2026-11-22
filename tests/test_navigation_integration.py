@@ -190,6 +190,40 @@ class NativeRecoveryIntegrationTests(unittest.TestCase):
         self.assertEqual(meta["world_model"]["edges"],[])
         self.assertNotIn("skill_outcomes",meta["world_model"])
 
+    def test_native_scout_supersedes_screenshot_inference_on_verified_map(self):
+        from core.firered import Field
+        from core.jj_explore import Explorer as ActualExplorer
+        class FieldAdapter(LocalAdapter):
+            def candidate(self,rgb):
+                return (Field((43,1),(2,2),5,5,(0,)*25),0x08001235,set())
+            def verified_field(self,c,meta):return c is not None
+        class PartyAcceptance(LocalAcceptance):
+            enabled=True
+            def read_party(self,live):
+                return [{"slot":0,"species_id":25,"level":5,
+                         "hp":20,"max_hp":20,"moves":[33],"pp":[30],"status":0}]
+        class InventoryBattles(LocalBattles):
+            def bag(self,live):return {"balls":[],"items":[]}
+        class EventExplorer(ActualExplorer):
+            def inspect(self,candidate,meta):return ([],None)
+        model=CountingModel();sha="a"*64
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);runner=root/"runner";runner.write_bytes(b"native fake")
+            with ExitStack() as stack:
+                for name,value in (("Live",LocalLive),("Adapter",FieldAdapter),
+                    ("BattleAdapter",InventoryBattles),("MenuDriver",LocalMenus),
+                    ("Explorer",EventExplorer),("Acceptance",PartyAcceptance),
+                    ("JJ_RELEASES",{sha})):
+                    stack.enter_context(patch("core.autoplay."+name,value))
+                stack.enter_context(patch("core.autoplay.try_catalog",return_value=None))
+                stack.enter_context(patch("core.autoplay.open_profile",return_value=(None,None)))
+                status,meta,rgb=play(runner,root/"rom",sha,
+                    "Leave the room",root,model,max_decisions=1)
+        self.assertEqual(status,"BUDGET_REACHED")
+        self.assertEqual(model.calls,0)
+        self.assertEqual(meta["history"][-1]["source"],"native_scout")
+        self.assertEqual(meta["history"][-1]["actions"][0]["button"],"UP")
+
     def test_production_navigation_leg_interrupted_by_battle_is_replanned(self):
         from core.firered import Field
         from core.jj_explore import Explorer as ActualExplorer

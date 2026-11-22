@@ -139,6 +139,25 @@ def script_settle(meta,screen,*,limit=8):
             "actions":[{"button":"WAIT","frames":24}],"review":False}
 
 
+def native_vision_budget(meta,field,*,limit=3):
+    """Cap expensive field vision when verified native skills run out.
+
+    The counter is per native map and independently validated party count.
+    Model-directed movement on the same map never renews its allowance.
+    """
+    f=field[0]
+    identity={"map":list(f.map_id),"party_count":meta.get("native_party_count")}
+    state=meta.get("native_vision_budget")
+    if not isinstance(state,dict) or any(state.get(k)!=v for k,v in identity.items()):
+        state=dict(identity,calls=0)
+        meta["native_vision_budget"]=state
+    if type(state.get("calls")) is not int or state["calls"]<0:
+        state["calls"]=limit
+    if state["calls"]>=limit:return False
+    state["calls"]+=1
+    return True
+
+
 def vision_stall(meta, field, *, limit=8):
     """Stop repeated expensive inference on any verified field map.
 
@@ -249,6 +268,11 @@ def diagnostic(adapter,battles,menus,field,meta):
             "catalog":battles.catalog is not None,"inventory":battles.field_inventory,
             "bag_candidate":menus.bag_ok,"party_candidate":menus.party_ok,
             "event_probe":meta.get("native_event_probe"),
+            "native_vision_budget":meta.get("native_vision_budget"),
+            "native_scout":{k:{"moves":v.get("moves"),"visited":len(v.get("visited",[])),
+                              "status":v.get("status")}
+                for k,v in meta.get("native_scout",{}).get("maps",{}).items()
+                if isinstance(v,dict)},
             "world":world_summary(meta),"tile_learning":tile_diagnostics(meta)}
 
 

@@ -11,6 +11,27 @@ class TestExplorer(unittest.TestCase):
         npc={"kind":"npc","x":3,"y":1,"id":1,"gfx":12}
         warp={"kind":"warp","x":4,"y":4,"id":0,"destination":[3,4]}
         return f,npc,warp
+    def test_native_scout_surveys_verified_floor_without_warp_or_npc_collision(self):
+        from core.firered import Field
+        field=Field((43,1),(2,2),5,5,(0,)*25)
+        before=(field,0x08001235,{(1,2)})
+        class A:
+            def verified_field(self,c,m):return c is not None
+        explorer=Explorer(A())
+        meta={}
+        info=([{"kind":"warp","x":2,"y":1,"id":0},
+               {"kind":"coord","x":2,"y":3,"id":1},
+               {"kind":"npc","x":1,"y":2,"id":2}],None)
+        decision,command=explorer.scout(before,meta,info)
+        self.assertEqual(decision["actions"][0]["button"],"RIGHT")
+        self.assertEqual(command,("move",(3,2)))
+        self.assertEqual(meta["native_scout"]["maps"]["43:1"]["visited"],[[2,2]])
+        after=(Field((43,1),(3,2),5,5,(0,)*25),0x08001235,{(1,2)})
+        self.assertEqual(explorer.finish_scout(meta,before,after,command),"moved")
+        self.assertEqual(meta["native_scout"]["maps"]["43:1"]["visited"],[[2,2],[3,2]])
+        self.assertIsNone(explorer.scout(before,meta,None))
+        self.assertIsNone(explorer.scout(None,meta,info))
+
     def test_native_event_probe_distinguishes_unverified_rejected_and_readable(self):
         from unittest.mock import patch
         f,npc,warp=self.setup()

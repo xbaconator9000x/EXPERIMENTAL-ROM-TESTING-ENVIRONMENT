@@ -1,4 +1,5 @@
 """Bounded purposeful exploration using witnessed native field state."""
+from collections import deque
 from core.jj_fast import OBJECTS, MAP_HEADER, DIR, u, signed
 from core.firered import span
 from core.live import LiveError
@@ -190,6 +191,75 @@ class Explorer:
             action=path[0].upper();dx,dy=DIR[action];expected=(f.pos[0]+dx,f.pos[1]+dy);kind="move"
         frames=(probe_frames(meta,f.map_id,expected) if kind=="move" else (1 if action!="A" else 5))
         return {"scene":"native_exploration","objective":("Interact with observed map event" if event["kind"] in ("npc","bg") else "Travel toward observed connection" if event["kind"]=="connection" else "Walk onto observed trigger" if event["kind"]=="coord" else "Approach observed warp"),"actions":[{"button":action,"frames":frames}],"review":False},(kind,expected)
+    def scout(self,candidate,meta,info,*,limit=96):
+        """Select an unvisited passable native tile, never an unknown event.
+
+        Only corroborated field state and parsed map events authorize a
+        movement. Warps and coordinate triggers are reserved for event
+        skills, not incidental frontier exploration.
+        """
+        if not candidate or not info or not self.adapter.verified_field(candidate,meta):
+            return None
+        f,_,occupied=candidate
+        events,_=info
+        if not isinstance(events,list):return None
+        key=":".join(map(str,f.map_id))
+        book=meta.setdefault("native_scout",{"maps":{}})
+        maps=book.setdefault("maps",{})
+        node=maps.setdefault(key,{"visited":[],"moves":0})
+        if not isinstance(node,dict):return None
+        visited=node.setdefault("visited",[])
+        if not isinstance(visited,list):return None
+        if list(f.pos) not in visited:visited.append(list(f.pos))
+        del visited[:-512]
+        moves=node.get("moves",0)
+        if type(moves) is not int or not 0<=moves<limit:
+            node["status"]="budget_exhausted";return None
+        hazards={(e["x"],e["y"]) for e in events if isinstance(e,dict)
+            and e.get("kind") in ("warp","coord")
+            and type(e.get("x")) is int and type(e.get("y")) is int}
+        avoided=set(occupied)|hazards|blocked_tiles(meta,f.map_id)
+        seen={tuple(f.pos)}
+        queue=deque([(tuple(f.pos),None)])
+        selected=None
+        while queue:
+            pos,first=queue.popleft()
+            if pos not in avoided and list(pos) not in visited:
+                selected=first
+                break
+            for direction,(dx,dy) in DIR.items():
+                nxt=(pos[0]+dx,pos[1]+dy)
+                if nxt in seen or nxt in avoided or not f.passable(*nxt):
+                    continue
+                seen.add(nxt)
+                queue.append((nxt,first or (direction,nxt)))
+        if selected is None:
+            node["status"]="explored";return None
+        direction,step=selected
+        node["status"]="surveying"
+        return ({"scene":"native_scout",
+                 "objective":"Survey a new native-verified walkable tile",
+                 "actions":[{"button":direction,
+                             "frames":probe_frames(meta,f.map_id,step)}],
+                 "review":False},("move",step))
+
+    def finish_scout(self,meta,before,after,command):
+        """Mark a scout step only after verified native coordinate movement."""
+        if before is None or command is None:return None
+        result=record_tile_step(meta,before,after,command,
+            verified_before=self.adapter.verified_field(before,meta),
+            verified_after=self.adapter.verified_field(after,meta))
+        if result=="moved":
+            f=before[0]
+            node=meta.get("native_scout",{}).get("maps",{}).get(":".join(map(str,f.map_id)))
+            if isinstance(node,dict) and after:
+                node["moves"]=min(1000000,node.get("moves",0)+1)
+                visited=node.setdefault("visited",[])
+                pos=list(after[0].pos)
+                if pos not in visited:visited.append(pos)
+                del visited[:-512]
+        return result
+
     def interrupt(self,meta,reason):
         """Discard a stale skill path without treating its objective as failed.
 

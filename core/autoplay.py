@@ -32,7 +32,7 @@ from core.jj_tile_memory import refresh_on_verified_arrival
 from core.jj_menus import MenuDriver,intent_from_battle
 from core.jj_runtime import NATIVE, animation_wait, record_field, count_decision, recovery_allowed
 from core.jj_connections import observe_arrival
-from core.jj_unattended import recovery, oscillation, field_hint, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id, bootstrap, vision_stall, script_settle
+from core.jj_unattended import recovery, oscillation, field_hint, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id, bootstrap, vision_stall, script_settle, native_vision_budget
 
 BUTTONS={"A":1,"B":2,"SELECT":4,"START":8,"RIGHT":16,"LEFT":32,"UP":64,"DOWN":128,"R":256,"L":512,"WAIT":0}
 SCHEMA={"type":"object","additionalProperties":False,"required":["scene","objective","actions","review"],"properties":{
@@ -378,7 +378,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             else:
                 invalidate_action_batch(meta)
             source="batch_navigation" if cached else ("remote_guidance" if decision else "vision")
-            route_expected=None;dialogue_page=None;battle_signature=None;event_command=None;menu_signature=None
+            route_expected=None;dialogue_page=None;battle_signature=None;event_command=None;menu_signature=None;scout_command=None
             if decision is None:
                 menu=menus.action(menu_before,meta)
                 if menu:decision,menu_signature=menu;source='native_menu'
@@ -431,6 +431,13 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     route=adapter.route_action(field_before,meta)
                     if route:decision,route_expected=route;source="native_route"
                     else:meta.pop("native_route",None)
+                # A parsed native map can be explored without calling Qwen
+                # after every event approach is exhausted.
+                if (decision is None and sha in JJ_RELEASES and field_verified
+                        and verified_party and
+                        meta.get("objective_state",{}).get("phase")=="explore_and_advance_story"):
+                    scout=explorer.scout(field_before,meta,events)
+                    if scout:decision,scout_command=scout;source="native_scout"
             if (decision is None and sha in JJ_RELEASES and
                     adapter.reason=="SCRIPT_CONTROL_LOCK" and
                     battle_before is None and menu_before is None):
@@ -471,6 +478,26 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 decision={"scene":"transition","objective":"Wait for blank-screen animation","actions":[{"button":"WAIT","frames":120}],"review":False}
                 source="transition_wait"
             try:
+                if (decision is None and sha in JJ_RELEASES and field_verified and
+                        battle_before is None and menu_before is None and
+                        ordinary_dialogue(rgb) is None and not meta.get("menu_intent")
+                        and not native_vision_budget(meta,field_before)):
+                    meta["review"]={
+                        "scene":"native_navigation_exhausted",
+                        "objective":meta.get("objective_state",{}).get("task","Advance story"),
+                        "reason":"native events and verified map-frontier navigation exhausted; bounded image fallback consumed",
+                        "native_event_probe":meta.get("native_event_probe"),
+                        "native_scout":meta.get("native_scout"),
+                        "native_vision_budget":meta.get("native_vision_budget")}
+                    save_progress(path,identity,meta,live.save_state(),rgb)
+                    report("NEEDS_REVIEW",meta,rgb)
+                    if control:
+                        control.review=True
+                        live,meta,rgb,_=control.serve(live,meta,rgb,should_stop)
+                        if should_stop():return "STOPPED",meta,rgb
+                        acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
+                        continue
+                    return "NEEDS_REVIEW",meta,rgb
                 if decision is None:
                     # A native event reader is the primary controller. If the
                     # model repeatedly wanders in the same starter map, park
@@ -573,7 +600,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     decision,batch_pending=prepare_action_batch(
                         decision,source,field_witness=nav_allowed,
                         battle=(battle_before is not None),menu=(menu_before is not None))
-            actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route","native_explore","native_menu","native_battle_wait","native_script_settle","field_recovery","batch_navigation") else choose(decision,history,screen)
+            actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route","native_explore","native_scout","native_menu","native_battle_wait","native_script_settle","field_recovery","batch_navigation") else choose(decision,history,screen)
             # A tested, direction-specific loop observation must override a
             # fresh model suggestion that simply retraces the same route.
             # Bounded recovery is tried first, above; when exhausted, park
@@ -697,6 +724,8 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if source=="native_explore":
                 explorer.finish(meta,field_before,field_after,event_command,
                                 interrupted=(after_battle is not None))
+            if source=="native_scout":
+                explorer.finish_scout(meta,field_before,field_after,scout_command)
             observe_arrival(meta,field_after,adapter.verified_field(field_after,meta))
             if source=="native_route":
                 if not field_after or not field_before or field_after[0].map_id!=field_before[0].map_id or field_after[0].pos!=route_expected:meta.pop("native_route",None)
@@ -716,6 +745,8 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if battle_signature:entry["battle_signature"]=battle_signature
             if menu_signature:entry["menu_signature"]=menu_signature
             if source=="native_route":entry["expected_tile"]=list(route_expected)
+            if source=="native_scout" and scout_command:
+                entry["expected_tile"]=list(scout_command[1])
             if source=="batch_navigation":entry["batch_reuse"]=True
             if source=="field_recovery" and oscillation(history,screen):entry["loop_escape"]=True
             if source=="field_recovery" and nav_allowed:entry["navigation_recovery"]=True

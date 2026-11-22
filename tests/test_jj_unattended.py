@@ -5,6 +5,20 @@ from core.live import LiveError
 def history():
     return [{"before":"a" if i%2==0 else "b","after":"b" if i%2==0 else "a","scene":"hospital_room","actions":[{"button":"UP" if i%2==0 else "DOWN","frames":16}]} for i in range(12)]
 class Tests(unittest.TestCase):
+    def test_verified_map_caps_expensive_vision_fallback(self):
+        from core.firered import Field
+        from core.jj_unattended import native_vision_budget
+        one=(Field((43,1),(3,3),8,8,(0,)*64),0x08001235,set())
+        meta={"native_party_count":1}
+        self.assertEqual([native_vision_budget(meta,one) for _ in range(5)],
+                         [True,True,True,False,False])
+        moved=(Field((43,1),(4,3),8,8,(0,)*64),0x08001235,set())
+        self.assertFalse(native_vision_budget(meta,moved))
+        meta["native_party_count"]=2
+        self.assertTrue(native_vision_budget(meta,moved))
+        next_map=(Field((43,2),(1,1),8,8,(0,)*64),0x08001235,set())
+        self.assertTrue(native_vision_budget(meta,next_map))
+
     def test_script_lock_waits_are_noninteractive_bounded_and_checkpointed(self):
         from core.jj_unattended import script_settle
         meta={}
