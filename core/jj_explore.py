@@ -127,11 +127,20 @@ class Explorer:
             field,_,occupied=candidate
             attempted=meta.get("event_attempts",[])
             if not isinstance(attempted,list):attempted=[]
-            choices=options(field,occupied,events,attempted,blocked_tiles(meta,field.map_id))
+            blocked=blocked_tiles(meta,field.map_id)
+            choices=options(field,occupied,events,attempted,blocked,
+                            avoid_warps=events)
+            # Zero untried events does not mean no physically reachable
+            # events. Explicitly distinguish an attempt-bookkeeping lockout
+            # from a genuine collision-graph disconnection.
+            retry_choices=(options(field,occupied,events,[],blocked,
+                                   avoid_warps=events)
+                           if attempted else choices)
             meta["native_event_probe"]={
                 "status":"EVENTS_READ",
                 "counts":{kind:sum(e["kind"]==kind for e in events) for kind in ("npc","warp","bg","coord","connection")},
                 "reachable":len(set(c[1] for c in choices)),
+                "reachable_if_retried":len(set(c[1] for c in retry_choices)),
                 "attempted":sum(event_key(field,e) in attempted for e in events),
                 "event_positions":[{"kind":e["kind"],"x":e["x"],"y":e["y"]} for e in events[:16]],
                 "active_goal":bool(meta.get("event_goal")),

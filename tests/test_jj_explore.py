@@ -52,6 +52,29 @@ class TestExplorer(unittest.TestCase):
         self.assertEqual(meta["native_revisit"]["sweeps"],1)
         self.assertTrue(ex.reconsider(candidate,meta,([warp,coord],None)))
 
+    def test_checkpoint_shaped_43_1_still_has_reachable_warp_after_attempts(self):
+        # The reported bedroom checkpoint has this native event layout.
+        # The grid here is deliberately synthetic: it tests the planner's
+        # prioritization, NOT real ROM collision data or map completion.
+        f=Field((43,1),(9,8),16,13,(0,)*(16*13))
+        warp={"kind":"warp","x":4,"y":2,"id":0,"destination":[43,2]}
+        coords=[{"kind":"coord","x":4,"y":2,"id":0},
+                {"kind":"coord","x":9,"y":6,"id":1},
+                {"kind":"coord","x":11,"y":6,"id":2}]
+        events=[warp,*coords]
+        attempted=[event_key(f,e) for e in events]
+        meta={"native_party_count":3,"event_attempts":attempted}
+        c=(f,0x08001235,set());ex=Explorer(MockAdapter())
+        self.assertEqual(options(f,set(),events,attempted,avoid_warps=events),[])
+        self.assertTrue(ex.reconsider(c,meta,(events,None)))
+        goal=meta["event_goal"]
+        self.assertEqual(goal["event"],warp)
+        action,command=ex.next(c,meta,(events,None))
+        self.assertEqual(action["scene"],"native_exploration")
+        self.assertEqual(command[0],"move")
+        self.assertNotIn(command[1],{(4,2),(9,6),(11,6)})
+        self.assertEqual(meta["event_attempts"],attempted)
+
     def test_normal_warp_request_reenters_without_first_exhausting_scout(self):
         f=Field((43,1),(4,2),8,8,(0,)*64)
         warp={"kind":"warp","x":4,"y":2,"id":0,"destination":[43,2]}
