@@ -123,6 +123,36 @@ class TestExplorer(unittest.TestCase):
         with self.assertRaises(ValueError):
             event_targets(live,len(buffer),f,header,0x02000000)
 
+    def test_starter_event_retry_is_bounded_without_erasing_checkpoint_attempts(self):
+        f,npc,warp=self.setup()
+        candidate=(f,0x08001235,{(3,1)})
+        key=event_key(f,npc)
+        meta={"objective_state":{"phase":"obtain_initial_party"},
+              "native_party_count":0,"event_attempts":[key]}
+        ex=Explorer(MockAdapter())
+        info=([npc,warp],"RIGHT")
+        self.assertTrue(ex.request(candidate,meta,info,"interact"))
+        self.assertEqual(meta["event_goal"]["event"],npc)
+        self.assertEqual(meta["event_attempts"],[key])
+        self.assertEqual(meta["starter_event_retry"],[1,2])
+        meta.pop("event_goal")
+        self.assertFalse(ex.request(candidate,meta,info,"interact"))
+
+    def test_missing_facing_byte_finishes_one_turn_before_a(self):
+        f,npc,warp=self.setup()
+        f=Field(f.map_id,(2,1),f.width,f.height,f.tiles)
+        candidate=(f,0x08001235,{(3,1)})
+        ex=Explorer(MockAdapter());meta={"native_party_count":0}
+        info=([npc,warp],None)
+        self.assertTrue(ex.request(candidate,meta,info,"interact"))
+        first,cmd=ex.next(candidate,meta,info)
+        self.assertEqual(first["actions"],[{"button":"RIGHT","frames":1}])
+        self.assertEqual(cmd[0],"face")
+        ex.finish(meta,candidate,candidate,cmd)
+        second,cmd=ex.next(candidate,meta,info)
+        self.assertEqual(second["actions"],[{"button":"A","frames":5}])
+        self.assertEqual(cmd[0],"interact")
+
     def test_event_approach_and_interaction(self):
         f,npc,warp=self.setup();c=(f,1,{(3,1)})
         ex=Explorer(MockAdapter());m={};info=([npc,warp],"RIGHT")
