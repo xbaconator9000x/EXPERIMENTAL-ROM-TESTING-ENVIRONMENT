@@ -14,7 +14,7 @@ def text_region(rgb):
     """The bottom Gen III message window; ignores animated overworld sprites."""
     if len(rgb)!=240*160*3:return ""
     return hashlib.sha256(b"".join(
-        rgb[(y*240+8)*3:(y*240+233)*3] for y in range(120,152)
+        rgb[(y*240+18)*3:(y*240+204)*3] for y in range(120,152)
     )).hexdigest()
 
 def changed(before,after):
