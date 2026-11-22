@@ -93,14 +93,37 @@ def reentry_neighbor(field,occupied,events,blocked=()):
     return None
 
 
+def _event_path(field,occupied,events,target,kind,blocked):
+    """Prefer routes avoiding all triggers; traverse coordinate scripts only if needed.
+
+    Coordinate triggers are NOT solid obstacles: Gen III maps can place them
+    across doorways or corridors. Treating every coord tile as a wall makes a
+    real warp unreachable, even when native movement can pass through it.
+    Genuine warp tiles remain forbidden as intermediate path nodes. Each step
+    is still sent separately and checked against native field/map witnesses.
+    """
+    warp_tiles={(e["x"],e["y"]) for e in events if e["kind"]=="warp"}
+    coord_tiles={(e["x"],e["y"]) for e in events if e["kind"]=="coord"}
+    blocked=set(blocked)
+    def route(allow_coord_transit):
+        return find_path(field.pos,target,lambda x,y:
+            field.passable(x,y) and (x,y) not in occupied and
+            (x,y) not in blocked and
+            ((x,y) not in warp_tiles or
+             (kind in ("warp","coord") and (x,y)==target)) and
+            (allow_coord_transit or (x,y) not in coord_tiles or
+             (kind in ("warp","coord") and (x,y)==target)),
+            field.width,field.height)
+    conservative=route(False)
+    return conservative if conservative is not None else route(True)
+
+
 def options(field,occupied,events,attempted,blocked=(),avoid_warps=None):
     """Rank reachable untried events, staying off unrelated warp tiles."""
     candidates=[]
     blocked=set(blocked)
-    # All original warp tiles remain hazardous even when the requested
-    # task filters the candidates down to NPCs or route connections.
-    triggers={(e["x"],e["y"]) for e in (events if avoid_warps is None else avoid_warps)
-              if e["kind"] in ("warp","coord")}
+    # Prefer conservative trigger-free routes, with checked coordinate transit
+    # only if the real collision graph otherwise disconnects the destination.
     for e in events:
         key=event_key(field,e)
         if key in attempted:continue
@@ -110,7 +133,7 @@ def options(field,occupied,events,attempted,blocked=(),avoid_warps=None):
         for target,direction in goals:
             if target==field.pos:path=[]
             else:
-                path=find_path(field.pos,target,lambda x,y:field.passable(x,y) and (x,y) not in occupied and (x,y) not in blocked and ((x,y) not in triggers or (e["kind"] in ("warp","coord") and (x,y)==target)),field.width,field.height)
+                path=_event_path(field,occupied,(events if avoid_warps is None else avoid_warps),target,e["kind"],blocked)
                 if path is None:continue
             candidates.append((len(path),key,tuple(target),direction,e,path))
     return sorted(candidates,key=lambda c:(c[0],c[1],c[2]))
@@ -315,7 +338,6 @@ class Explorer:
         f,_,occupied=candidate;events,facing=info
         if goal["map"]!=list(f.map_id) or goal["remaining"]<=0 or goal["event"] not in events:return None
         target=tuple(goal["target"]);event=goal["event"]
-        warps={(e["x"],e["y"]) for e in events if e["kind"] in ("warp","coord")}
         blocked=blocked_tiles(meta,f.map_id)
         if f.pos==target:
             if (goal.get("retry") and not goal.get("reentered")
@@ -347,7 +369,7 @@ class Explorer:
                 action=goal["facing"];expected=f.pos;kind="face"
             else:action="A";expected=None;kind="interact"
         else:
-            path=find_path(f.pos,target,lambda x,y:f.passable(x,y) and (x,y) not in occupied and (x,y) not in blocked and ((x,y) not in warps or (event["kind"] in ("warp","coord") and (x,y)==target)),f.width,f.height)
+            path=_event_path(f,occupied,events,target,event["kind"],blocked)
             if not path:return None
             action=path[0].upper();dx,dy=DIR[action];expected=(f.pos[0]+dx,f.pos[1]+dy);kind="move"
         frames=(probe_frames(meta,f.map_id,expected) if kind=="move" else (1 if action!="A" else 5))
