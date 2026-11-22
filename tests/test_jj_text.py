@@ -93,7 +93,7 @@ class TextEngineTests(unittest.TestCase):
         self.assertEqual(meta["native_text_probe"]["status"],
                          "REPEATED_VISUAL_PAGE_GUARDED")
         changed=bytearray(image())
-        changed[(130*240+30)*3:(130*240+31)*3]=b"\\xff\\x00\\x00"
+        changed[(130*240+30)*3:(130*240+31)*3]=bytes((255,0,0))
         c,_=self.run_decide(Live(kind=0),meta,bytes(changed))
         self.assertEqual(c["actions"],[{"button":"A","frames":4}])
         d,_=self.run_decide(Live(kind=0),meta,image(choice=True))
