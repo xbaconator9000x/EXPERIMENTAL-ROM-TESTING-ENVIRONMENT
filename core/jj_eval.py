@@ -11,10 +11,11 @@ import hashlib
 import json
 import os
 import re
+import struct
 import tempfile
 from pathlib import Path
 
-from core.autoplay import OllamaVision, load_progress, play, save_progress
+from core.autoplay import MAGIC, OllamaVision, load_progress, play, save_progress
 from core.native_acceptance import engine_hash
 from core.jj_runtime import NATIVE
 
@@ -34,6 +35,28 @@ EVENTS=frozenset(("native_step","map_crossing","battle_win","wild_capture",
 SUCCESS_STATUSES=frozenset(("BUDGET_REACHED","STOPPED","RUNNING"))
 NAV_BUTTONS=frozenset(("UP","DOWN","LEFT","RIGHT"))
 MAX_AUDIT_BYTES=4*1024*1024
+
+
+def read_identity(checkpoint):
+    """Read only the bounded JSON header; full state verified by load_progress."""
+    path=Path(checkpoint)
+    if path.is_symlink() or not path.is_file():raise ValueError("Invalid source checkpoint")
+    with path.open("rb") as stream:
+        if stream.read(len(MAGIC))!=MAGIC:raise ValueError("Invalid checkpoint magic")
+        length_data=stream.read(4)
+        if len(length_data)!=4:raise ValueError("Truncated checkpoint header")
+        n=struct.unpack(">I",length_data)[0]
+        if not 0<n<=256*1024:raise ValueError("Invalid checkpoint metadata size")
+        header=json.loads(stream.read(n))
+    ident=header.get("identity") if isinstance(header,dict) else None
+    if not isinstance(ident,dict) or set(ident)!={"rom","runner","goal","model"}:
+        raise ValueError("Unsupported Jessie & James checkpoint identity")
+    if (not isinstance(ident["rom"],str) or not SHA.fullmatch(ident["rom"])
+            or not isinstance(ident["runner"],str) or not SHA.fullmatch(ident["runner"])
+            or not isinstance(ident["goal"],str) or not 1<=len(ident["goal"])<=2048
+            or not isinstance(ident["model"],str) or not 1<=len(ident["model"])<=128):
+        raise ValueError("Malformed checkpoint identity")
+    return ident
 
 
 def _digest_file(path):
@@ -296,24 +319,33 @@ def main(argv=None):
     sub=p.add_subparsers(dest="command",required=True)
     sub.add_parser("list",help="List evidence-gated real gameplay scenarios")
     run=sub.add_parser("run",help="Run in a fresh isolated folder; requires explicit local ROM")
-    for key in ("scenario","checkpoint","output_root","runner","rom","rom_sha","goal","model"):
+    for key in ("scenario","checkpoint","output_root","runner","rom","rom_sha"):
         run.add_argument("--"+key.replace("_","-"),required=True)
+    run.add_argument("--goal",help="Must match the existing checkpoint goal; defaults to its original value")
+    run.add_argument("--model",help="Must match the existing checkpoint model; defaults to its original value")
     run.add_argument("--budget",type=int,default=30)
     score=sub.add_parser("score",help="Score two validated checkpoint snapshots without emulation")
-    for key in ("scenario","before","after","runner","rom_sha","goal","model"):
+    for key in ("scenario","before","after","runner","rom_sha"):
         score.add_argument("--"+key.replace("_","-"),required=True)
+    score.add_argument("--goal")
+    score.add_argument("--model")
     score.add_argument("--status",default="BUDGET_REACHED")
     args=p.parse_args(argv)
     if args.command=="list":
         for k,v in SCENARIOS.items():print(k+"\t"+v["description"])
         return 0
+    original=read_identity(args.checkpoint if args.command=="run" else args.before)
+    goal=args.goal or original["goal"]
+    model_name=args.model or original["model"]
+    if goal!=original["goal"] or model_name!=original["model"]:
+        raise ValueError("Evaluation cannot change the live campaign goal or model identity")
     if args.command=="run":
         result=run_isolated(args.scenario,args.checkpoint,args.output_root,
-                args.runner,args.rom,args.rom_sha,args.goal,
-                OllamaVision(model=args.model),budget=args.budget)
+                args.runner,args.rom,args.rom_sha,goal,
+                OllamaVision(model=model_name),budget=args.budget)
     else:
         identity={"rom":args.rom_sha,"runner":_digest_file(args.runner),
-                  "goal":args.goal,"model":args.model}
+                  "goal":goal,"model":model_name}
         initial=load_progress(Path(args.before),identity)
         final=load_progress(Path(args.after),identity)
         if initial is None or final is None:raise ValueError("Missing checkpoint")
