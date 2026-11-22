@@ -12,7 +12,7 @@ from core.gen3_profiles import party_snapshot
 
 KEYS=("native_step","map_crossing","battle_win","wild_capture","healing",
       "native_move","checkpoint_reload")
-SOURCE_FILES=("autoplay.py","action_batch.py","gen3_profiles.py","jj_fast.py","jj_battle.py",
+SOURCE_FILES=("autoplay.py","action_batch.py","navigation_memory.py","gen3_profiles.py","jj_fast.py","jj_battle.py",
               "jj_menus.py","jj_explore.py","jj_connections.py","upstream_battle.py",
               "native_acceptance.py","firered.py","rom_catalog.py","live.py",
               "upstream_leafgreen/type_chart.py","upstream_leafgreen/move_kinds.py",
