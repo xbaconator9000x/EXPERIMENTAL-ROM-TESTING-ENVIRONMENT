@@ -310,7 +310,8 @@ def knowledge_context(meta):
         roster.append(row)
     return {"last_verified_decision":current.get("decision"),
             "party":roster,"coverage":party_coverage(meta),
-            "verified_outcomes":data.get("verified_outcomes",[])[-6:],
+            "verified_outcomes":[{k:x[k] for k in ("kind","decision","species_id","slot") if k in x}
+                for x in data.get("verified_outcomes",[])[-6:] if isinstance(x,dict)],
             "warning":"Historical party knowledge; never trust remembered PP/HP/menus for controller actions."}
 
 
