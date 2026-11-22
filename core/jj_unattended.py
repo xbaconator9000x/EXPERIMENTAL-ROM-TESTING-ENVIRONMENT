@@ -190,6 +190,7 @@ def rearm_after_script_recovery(meta,field,*,unlocked=False,visible_dialogue=Fal
         archive.append({"reason":"new_script_epoch","attempts":attempts[-128:]})
         meta["prior_event_attempts"]=archive[-4:]
     meta["event_attempts"]=[]
+    meta.pop("review",None)
     for key in ("event_goal","native_route","native_revisit",
                 "field_strategic_referral","native_vision_budget",
                 "exceptional_vision","bootstrap","stale_script_field"):
