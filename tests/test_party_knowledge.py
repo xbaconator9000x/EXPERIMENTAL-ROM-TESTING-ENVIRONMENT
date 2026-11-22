@@ -131,6 +131,35 @@ class PartyKnowledgeTests(unittest.TestCase):
         self.assertEqual(capture_preference(trio,{"species":400},Catalog,balls)["reason"],
                          "unknown_type_coverage")
 
+    def test_true_checkpoint_roundtrip_preserves_verified_roster(self):
+        import tempfile
+        from pathlib import Path
+        from core.autoplay import save_progress,load_progress
+        meta={"decisions":9,"frames":120,"history":[]}
+        self.assertTrue(observe_party(meta,[mon(),mon(1,25)],Catalog,decision=9))
+        identity={"rom":"a"*64,"runner":"b"*64,"model":"fake","goal":"story"}
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"progress.bin"
+            save_progress(path,identity,meta,b"state",bytes(115200))
+            saved,state,rgb=load_progress(path,identity)
+            self.assertEqual(state,b"state")
+            self.assertEqual(saved["party_knowledge"],meta["party_knowledge"])
+            self.assertEqual(knowledge_context(saved)["party"][1]["name"],"PIKACHU")
+            with self.assertRaises(ValueError):
+                load_progress(path,{**identity,"rom":"c"*64})
+
+    def test_repeat_same_verified_snapshot_does_not_emit_fake_captures(self):
+        meta={}
+        party=[mon()]
+        for turn in (1,2,3):
+            self.assertTrue(observe_party(meta,party,Catalog,decision=turn))
+        self.assertEqual([x["kind"] for x in meta["party_knowledge"]["events"]],["party_slot"])
+        self.assertTrue(observe_party(meta,[mon(),mon(1,25)],Catalog,decision=4))
+        self.assertEqual(len(meta["party_knowledge"]["events"]),2)
+        self.assertEqual(meta["party_knowledge"]["events"][-1]["kind"],"party_slot")
+        # This is a roster-change witness, not claimed evidence of catching.
+        self.assertNotIn("wild_capture",str(meta["party_knowledge"]))
+
     def test_unknown_move_effect_is_not_promoted_to_safe_macro(self):
         state=battle([mon()])
         state["own"]["moves"]=[100,0,0,0]
