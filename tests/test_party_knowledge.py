@@ -4,7 +4,7 @@ import unittest
 
 from core.party_knowledge import (
     observe_party, observe_battle, knowledge_context, capture_preference,
-    battle_advice, valid_party, party_coverage,
+    battle_advice, valid_party, party_coverage, retain_verified_outcomes,
 )
 
 
@@ -174,6 +174,28 @@ class PartyKnowledgeTests(unittest.TestCase):
         self.assertEqual(meta["party_knowledge"]["events"][-1]["kind"],"party_slot")
         # This is a roster-change witness, not claimed evidence of catching.
         self.assertNotIn("wild_capture",str(meta["party_knowledge"]))
+
+    def test_only_native_acceptance_results_are_remembered(self):
+        before="a"*64;after="b"*64
+        meta={"party_knowledge":{"version":1,"events":[],"current":{}},
+              "native_acceptance":{"profile_admitted":True,"events":[
+                  {"kind":"battle_win","decision":17,"before":before,"after":after,
+                   "source":"native_battle"},
+                  {"kind":"wild_capture","decision":23,"before":before,"after":after,
+                   "detail":{"species":25}},
+                  {"kind":"native_step","decision":24,"before":before,"after":after},
+              ]}}
+        self.assertEqual(retain_verified_outcomes(meta),2)
+        self.assertEqual(retain_verified_outcomes(meta),0)
+        outcomes=meta["party_knowledge"]["verified_outcomes"]
+        self.assertEqual([x["kind"] for x in outcomes],["battle_win","wild_capture"])
+        self.assertEqual(outcomes[-1]["species_id"],25)
+        meta["native_acceptance"]["profile_admitted"]=False
+        meta["native_acceptance"]["events"].append(
+            {"kind":"wild_capture","decision":25,"before":before,"after":after,
+             "detail":{"species":19}})
+        self.assertEqual(retain_verified_outcomes(meta),0)
+        self.assertEqual(len(meta["party_knowledge"]["verified_outcomes"]),2)
 
     def test_unknown_move_effect_is_not_promoted_to_safe_macro(self):
         state=battle([mon()])
