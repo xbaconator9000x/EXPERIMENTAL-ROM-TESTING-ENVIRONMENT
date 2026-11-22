@@ -3,7 +3,7 @@ from core.jj_fast import MAIN
 from core.jj_battle import BATTLE_CB,FLAGS
 from core.live import LiveError
 
-NATIVE={"fast_dialogue","native_route","native_explore","native_battle","native_menu","native_battle_wait","field_recovery","batch_navigation"}
+NATIVE={"fast_dialogue","native_route","native_explore","native_battle","native_menu","native_battle_wait","native_script_settle","field_recovery","batch_navigation"}
 
 def animation_wait(live,battles,battle,meta):
     # No button press, no assumed text advance. Only a validated battle
