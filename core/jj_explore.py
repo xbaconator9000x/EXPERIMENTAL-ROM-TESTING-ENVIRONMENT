@@ -155,6 +155,8 @@ class Explorer:
         # witness checks do the movement. Avoid repeating visited routes while
         # retaining the option to return through story-gated map connections.
         party=meta.get("native_party_count")
+        if task=="interact" and meta.get("objective_state",{}).get("phase")=="obtain_initial_party":
+            party=0
         chosen=rank_goal(meta,choices,party,current_map=f.map_id,task_name=task)
         if chosen is None:return False
         _,key,target,facing,event,path=chosen
@@ -169,7 +171,14 @@ class Explorer:
         warps={(e["x"],e["y"]) for e in events if e["kind"]=="warp"}
         blocked=blocked_tiles(meta,f.map_id)
         if f.pos==target:
-            if event["kind"] in ("warp","coord"):return None
+            if event["kind"] in ("warp","coord"):
+                # Standing on a native trigger is an attempted arrival,
+                # not proof that its script ran or a warp completed.
+                attempted=meta.get("event_attempts",[])
+                if goal["key"] not in attempted:attempted.append(goal["key"])
+                meta["event_attempts"]=attempted[-300:]
+                meta.pop("event_goal",None)
+                return None
             if event["kind"]=="connection":
                 action=event["direction"];expected=None;kind="cross"
             elif facing!=goal["facing"] and not (facing is None and goal.get("face_confirmed")):
