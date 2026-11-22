@@ -32,7 +32,7 @@ from core.jj_tile_memory import refresh_on_verified_arrival
 from core.jj_menus import MenuDriver,intent_from_battle
 from core.jj_runtime import NATIVE, animation_wait, record_field, count_decision, recovery_allowed
 from core.jj_connections import observe_arrival
-from core.jj_unattended import recovery, oscillation, field_hint, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id, bootstrap, vision_stall, script_settle, exceptional_vision
+from core.jj_unattended import recovery, oscillation, field_hint, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id, bootstrap, vision_stall, script_settle, exceptional_vision, field_strategic_referral
 
 BUTTONS={"A":1,"B":2,"SELECT":4,"START":8,"RIGHT":16,"LEFT":32,"UP":64,"DOWN":128,"R":256,"L":512,"WAIT":0}
 SCHEMA={"type":"object","additionalProperties":False,"required":["scene","objective","actions","review"],"properties":{
@@ -473,6 +473,15 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                         meta.get("objective_state",{}).get("phase")=="explore_and_advance_story"):
                     scout=explorer.scout(field_before,meta,events)
                     if scout:decision,scout_command=scout;source="native_scout"
+                # Exhaust meaningful ROM-derived exit/coordinate/NPC choices
+                # in multiple substantial sweeps before a Qwen referral.
+                if (decision is None and field_verified and events
+                        and hasattr(explorer,"reconsider")
+                        and explorer.reconsider(field_before,meta,events)):
+                    again=explorer.next(field_before,meta,events)
+                    if again:
+                        decision,event_command=again
+                        source="native_explore"
             if (decision is None and sha in JJ_RELEASES and
                     adapter.reason=="SCRIPT_CONTROL_LOCK" and
                     battle_before is None and menu_before is None):
@@ -514,29 +523,34 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if decision is None and not field_owned and max(rgb)-min(rgb)<8 and not any(h.get("source")=="transition_wait" for h in history[-2:]):
                 decision={"scene":"transition","objective":"Wait for blank-screen animation","actions":[{"button":"WAIT","frames":120}],"review":False}
                 source="transition_wait"
+            strategic_field=False
             try:
                 if decision is None and field_owned:
-                    # Never cede a known field to a screen-derived walking
-                    # plan. Even one improvised step can corrupt event/path
-                    # ordering; fail closed with a recoverable checkpoint.
-                    invalidate_action_batch(meta)
-                    meta["review"]={
-                        "scene":"native_navigation_exhausted",
-                        "objective":meta.get("objective_state",{}).get("task","Advance story"),
-                        "reason":"native field is authoritative; no verified event, route or frontier action remains; Qwen movement disabled",
-                        "native_event_probe":meta.get("native_event_probe"),
-                        "native_scout":meta.get("native_scout"),
-                        "model_calls_avoided":True}
-                    save_progress(path,identity,meta,live.save_state(),rgb)
-                    report("NEEDS_REVIEW",meta,rgb)
-                    if control:
-                        control.review=True
-                        live,meta,rgb,_=control.serve(live,meta,rgb,should_stop)
-                        if should_stop():return "STOPPED",meta,rgb
-                        acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
-                        continue
-                    return "NEEDS_REVIEW",meta,rgb
-                if decision is None and sha in JJ_RELEASES and not exceptional_vision(
+                    # Qwen is not the next navigation skill. Only after 24
+                    # native event approaches in each sweep can a strategic
+                    # visual consultation suggest another *native* goal.
+                    if field_strategic_referral(meta,field_before):
+                        strategic_field=True
+                    else:
+                        invalidate_action_batch(meta)
+                        meta["review"]={
+                            "scene":"native_navigation_exhausted",
+                            "objective":meta.get("objective_state",{}).get("task","Advance story"),
+                            "reason":"native frontier and repeated event approaches exhausted after two sparse strategic referrals",
+                            "native_event_probe":meta.get("native_event_probe"),
+                            "native_scout":meta.get("native_scout"),
+                            "native_revisit":meta.get("native_revisit"),
+                            "field_strategic_referral":meta.get("field_strategic_referral")}
+                        save_progress(path,identity,meta,live.save_state(),rgb)
+                        report("NEEDS_REVIEW",meta,rgb)
+                        if control:
+                            control.review=True
+                            live,meta,rgb,_=control.serve(live,meta,rgb,should_stop)
+                            if should_stop():return "STOPPED",meta,rgb
+                            acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
+                            continue
+                        return "NEEDS_REVIEW",meta,rgb
+                if decision is None and sha in JJ_RELEASES and not strategic_field and not exceptional_vision(
                         meta,field_before,getattr(adapter,"reason",""),
                         battle=bool(battle_before),menu=bool(menu_before),
                         dialogue=ordinary_dialogue(rgb) is not None):
@@ -631,12 +645,26 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     combat=battles.action(battle_before,meta)
                     if combat:decision,battle_signature=combat;source="native_battle"
             meta["catalog_active"]=catalog is not None
+            if strategic_field:
+                # A field-referral is consultation only: a screenshot may
+                # nominate a native event/target, but must never inject raw
+                # D-pad, A, menu or battle controls into the trusted field.
+                if hasattr(explorer,"restart_reconsider"):
+                    explorer.restart_reconsider(meta)
+                if decision["review"]:
+                    decision={**decision,"review":False,
+                              "actions":[{"button":"WAIT","frames":16}]}
             if source.startswith("vision") and not decision["review"] and explorer.request(field_before,meta,events,decision.get("field_task")):
                 event=explorer.next(field_before,meta,events)
                 if event:decision,event_command=event;source="native_explore";meta.pop("native_route",None)
             if source.startswith("vision") and not decision["review"] and adapter.start_route(field_before,meta,decision.get("field_target")):
                 route=adapter.route_action(field_before,meta)
                 if route:decision,route_expected=route;source="native_route"
+            if strategic_field and source.startswith("vision"):
+                decision={"scene":"native_strategic_recheck",
+                          "objective":"Resume native navigation after strategic visual consultation",
+                          "actions":[{"button":"WAIT","frames":16}],"review":False}
+                source="native_strategic_recheck"
             planned=policy(obs,goal,history,screen) if not decision["review"] and source not in ("remote_guidance","native_route","fast_dialogue","native_battle","native_explore","native_scout","native_menu","native_battle_wait","field_recovery") else None
             if planned and planned[0]:
                 decision={**decision,"actions":planned[0],"objective":planned[1][:240]};source="pokemon_policy"
@@ -664,7 +692,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     decision,batch_pending=prepare_action_batch(
                         decision,source,field_witness=nav_allowed,
                         battle=(battle_before is not None),menu=(menu_before is not None))
-            actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route","native_explore","native_scout","native_menu","native_battle_wait","native_script_settle","field_recovery","batch_navigation") else choose(decision,history,screen)
+            actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route","native_explore","native_scout","native_menu","native_battle_wait","native_script_settle","native_strategic_recheck","field_recovery","batch_navigation") else choose(decision,history,screen)
             # A tested, direction-specific loop observation must override a
             # fresh model suggestion that simply retraces the same route.
             # Bounded recovery is tried first, above; when exhausted, park

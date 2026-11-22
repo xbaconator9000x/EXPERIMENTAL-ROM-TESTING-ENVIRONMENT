@@ -139,6 +139,26 @@ def script_settle(meta,screen,*,limit=8):
             "actions":[{"button":"WAIT","frames":24}],"review":False}
 
 
+def field_strategic_referral(meta,field,*,limit=2):
+    """A rare strategic visual consult after 24 native event approaches.
+
+    Only a verified map can use this counter. Each query opens another native
+    sweep; visual commands are *never* accepted directly as field movement.
+    After the last consult, the native navigator receives one more full
+    sweep before a durable needs-review checkpoint.
+    """
+    if not field:return False
+    key=[*field[0].map_id,meta.get("native_party_count")]
+    state=meta.get("field_strategic_referral")
+    if not isinstance(state,dict) or state.get("epoch")!=key:
+        state={"epoch":key,"calls":0}
+        meta["field_strategic_referral"]=state
+    if type(state.get("calls")) is not int or not 0<=state["calls"]<limit:
+        return False
+    state["calls"]+=1
+    return True
+
+
 def exceptional_vision(meta,field,reason,*,battle=False,menu=False,dialogue=False,limit=1):
     """Allow vision only for an unknown scene, never an admitted field.
 

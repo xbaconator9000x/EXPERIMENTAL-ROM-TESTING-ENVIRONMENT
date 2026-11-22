@@ -32,6 +32,49 @@ class TestExplorer(unittest.TestCase):
         self.assertIsNone(explorer.scout(before,meta,None))
         self.assertIsNone(explorer.scout(None,meta,info))
 
+    def test_native_reconsider_exhausts_24_actual_rom_event_approaches(self):
+        from core.jj_explore import NATIVE_RETRY_APPROACHES
+        from core.firered import Field
+        f=Field((43,1),(2,2),8,8,(0,)*64)
+        warp={"kind":"warp","x":4,"y":2,"id":0,"destination":[43,2]}
+        coord={"kind":"coord","x":3,"y":4,"id":0}
+        ex=Explorer(MockAdapter())
+        meta={"native_party_count":3,"event_attempts":[event_key(f,warp),event_key(f,coord)]}
+        candidate=(f,0x08001235,set())
+        for i in range(NATIVE_RETRY_APPROACHES):
+            self.assertTrue(ex.reconsider(candidate,meta,([warp,coord],None)),i)
+            self.assertIn("event_goal",meta)
+            meta.pop("event_goal")
+        self.assertEqual(meta["native_revisit"]["approaches"],24)
+        self.assertFalse(ex.reconsider(candidate,meta,([warp,coord],None)))
+        self.assertEqual(meta["event_attempts"],[event_key(f,warp),event_key(f,coord)])
+        ex.restart_reconsider(meta)
+        self.assertEqual(meta["native_revisit"]["sweeps"],1)
+        self.assertTrue(ex.reconsider(candidate,meta,([warp,coord],None)))
+
+    def test_retry_warp_standing_on_trigger_steps_off_and_reenters(self):
+        from core.firered import Field
+        f=Field((43,1),(4,2),8,8,(0,)*64)
+        warp={"kind":"warp","x":4,"y":2,"id":0,"destination":[43,2]}
+        candidate=(f,0x08001235,set())
+        ex=Explorer(MockAdapter());meta={"native_party_count":3}
+        info=([warp],None)
+        self.assertTrue(ex.reconsider(candidate,meta,info))
+        away,move=ex.next(candidate,meta,info)
+        self.assertEqual(away["scene"],"native_event_reentry")
+        self.assertEqual(move[0],"move")
+        self.assertNotEqual(move[1],(4,2))
+        after=(Field((43,1),move[1],8,8,(0,)*64),0x08001235,set())
+        ex.finish(meta,candidate,after,move)
+        self.assertIn("event_goal",meta)
+        toward,command=ex.next(after,meta,info)
+        self.assertEqual(command,("move",(4,2)))
+        self.assertEqual(toward["actions"][0]["button"],"DOWN")
+        ex.finish(meta,after,candidate,command)
+        self.assertTrue(meta["event_goal"]["reentered"])
+        self.assertIsNone(ex.next(candidate,meta,info))
+        self.assertNotIn("event_goal",meta)
+
     def test_native_event_probe_distinguishes_unverified_rejected_and_readable(self):
         from unittest.mock import patch
         f,npc,warp=self.setup()

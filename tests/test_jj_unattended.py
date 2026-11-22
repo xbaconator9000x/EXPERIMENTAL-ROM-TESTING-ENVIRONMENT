@@ -5,6 +5,17 @@ from core.live import LiveError
 def history():
     return [{"before":"a" if i%2==0 else "b","after":"b" if i%2==0 else "a","scene":"hospital_room","actions":[{"button":"UP" if i%2==0 else "DOWN","frames":16}]} for i in range(12)]
 class Tests(unittest.TestCase):
+    def test_sparse_strategic_referrals_have_map_party_budget(self):
+        from core.jj_unattended import field_strategic_referral
+        from core.firered import Field
+        field=(Field((43,1),(4,2),8,8,(0,)*64),0x08001235,set())
+        meta={"native_party_count":3}
+        self.assertEqual([field_strategic_referral(meta,field) for _ in range(4)],
+                         [True,True,False,False])
+        self.assertEqual(meta["field_strategic_referral"]["calls"],2)
+        meta["native_party_count"]=4
+        self.assertTrue(field_strategic_referral(meta,field))
+
     def test_exceptional_vision_never_controls_native_field_and_is_bounded(self):
         from core.firered import Field
         from core.jj_unattended import exceptional_vision

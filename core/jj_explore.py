@@ -9,6 +9,10 @@ from core.jj_tile_memory import blocked_tiles, probe_frames, record as record_ti
 from vendor.pokemon_agent.pathfinding import find_path
 
 FACING={1:"DOWN",2:"UP",3:"LEFT",4:"RIGHT"}
+# Only after a full native event/frontier pass do we try previously attempted
+# events again. The retry budget is *event approaches*, not repeated idle polls.
+NATIVE_RETRY_APPROACHES=24
+NATIVE_RETRY_PER_TARGET=8
 
 def event_targets(live,rom_size,field,map_header=MAP_HEADER,object_base=OBJECTS,vmap=None):
     """Only expose in-map coordinates from structurally checked ROM pointers."""
@@ -163,6 +167,62 @@ class Explorer:
         _,key,target,facing,event,path=chosen
         meta["event_goal"]={"map":list(f.map_id),"key":key,"event":event,"target":list(target),"facing":facing,"remaining":min(48,len(path)+3)}
         return True
+    def reconsider(self,candidate,meta,info):
+        """Systematically retry genuine ROM events after normal A* exploration.
+
+        The original event-attempt audit is not cleared. A map/party-scoped
+        round tries distinct exits and triggers before repeating them; up to
+        24 *planned event approaches* between visual consultations. When no
+        actual path exists the reader reports exhaustion immediately rather
+        than burning emulator frames on blind movement.
+        """
+        if (not candidate or not info or
+                not self.adapter.verified_field(candidate,meta)
+                or meta.get("event_goal")):return False
+        field,_,occupied=candidate;events,_=info
+        if not isinstance(events,list):return False
+        epoch=[*field.map_id,meta.get("native_party_count")]
+        state=meta.get("native_revisit")
+        if not isinstance(state,dict) or state.get("epoch")!=epoch:
+            state={"epoch":epoch,"approaches":0,"per_target":{},"sweeps":0}
+            meta["native_revisit"]=state
+        approaches=state.get("approaches",0)
+        if type(approaches) is not int or approaches>=NATIVE_RETRY_APPROACHES:
+            state["status"]="retry_threshold_reached"
+            return False
+        counts=state.get("per_target",{})
+        if not isinstance(counts,dict):counts={};state["per_target"]=counts
+        viable=options(field,occupied,events,[],blocked_tiles(meta,field.map_id),
+                       avoid_warps=events)
+        # Repeated warp/coord entry requires an approach; being already
+        # on the trigger is handled by a verified step off and then back.
+        viable=[c for c in viable if c[4].get("kind") in
+                ("warp","connection","coord","npc","bg")
+                and counts.get(c[1],0)<NATIVE_RETRY_PER_TARGET]
+        if not viable:
+            state["status"]="no_reachable_native_events"
+            return False
+        kind_priority={"warp":0,"connection":1,"coord":2,"npc":3,"bg":4}
+        chosen=min(viable,key=lambda c:(
+            counts.get(c[1],0),kind_priority[c[4]["kind"]],c[0],c[1],c[2]))
+        dist,key,target,facing,event,path=chosen
+        counts[key]=counts.get(key,0)+1
+        state["approaches"]=approaches+1
+        state["status"]="retrying_native_events"
+        meta["event_goal"]={"map":list(field.map_id),"key":key,"event":event,
+                            "target":list(target),"facing":facing,
+                            "retry":True,"remaining":min(64,len(path)+8)}
+        return True
+
+    def restart_reconsider(self,meta):
+        """Allow a fresh native sweep after an exceptional strategic check."""
+        state=meta.get("native_revisit")
+        if not isinstance(state,dict):return
+        state["sweeps"]=max(0,int(state.get("sweeps",0)))+1
+        state["approaches"]=0
+        state["per_target"]={}
+        state["status"]="fresh_native_sweep_after_strategic_check"
+
     def next(self,candidate,meta,info):
         goal=meta.get("event_goal")
         if not goal or not info or not candidate:return None
@@ -172,6 +232,29 @@ class Explorer:
         warps={(e["x"],e["y"]) for e in events if e["kind"]=="warp"}
         blocked=blocked_tiles(meta,f.map_id)
         if f.pos==target:
+            if (goal.get("retry") and not goal.get("reentered")
+                    and event["kind"] in ("warp","coord")):
+                # Walking *onto* a trigger is the event, not standing on it.
+                # Re-enter via one known safe adjacent tile rather than
+                # pressing A or relying on Qwen's guessed directions.
+                hazards={(e["x"],e["y"]) for e in events
+                         if e["kind"] in ("warp","coord")}
+                detours=[]
+                for button,(dx,dy) in DIR.items():
+                    neighbor=(f.pos[0]+dx,f.pos[1]+dy)
+                    if (neighbor not in warps and neighbor not in hazards
+                            and neighbor not in occupied and neighbor not in blocked
+                            and f.passable(*neighbor)):
+                        detours.append((button,neighbor))
+                if detours:
+                    button,neighbor=detours[0]
+                    return ({"scene":"native_event_reentry",
+                             "objective":"Re-enter previously attempted native trigger",
+                             "actions":[{"button":button,
+                                         "frames":probe_frames(meta,f.map_id,neighbor)}],
+                             "review":False},("move",neighbor))
+                meta.pop("event_goal",None)
+                return None
             if event["kind"] in ("warp","coord"):
                 # Standing on a native trigger is an attempted arrival,
                 # not proof that its script ran or a warp completed.
@@ -191,7 +274,7 @@ class Explorer:
             action=path[0].upper();dx,dy=DIR[action];expected=(f.pos[0]+dx,f.pos[1]+dy);kind="move"
         frames=(probe_frames(meta,f.map_id,expected) if kind=="move" else (1 if action!="A" else 5))
         return {"scene":"native_exploration","objective":("Interact with observed map event" if event["kind"] in ("npc","bg") else "Travel toward observed connection" if event["kind"]=="connection" else "Walk onto observed trigger" if event["kind"]=="coord" else "Approach observed warp"),"actions":[{"button":action,"frames":frames}],"review":False},(kind,expected)
-    def scout(self,candidate,meta,info,*,limit=96):
+    def scout(self,candidate,meta,info,*,limit=384):
         """Select an unvisited passable native tile, never an unknown event.
 
         Only corroborated field state and parsed map events authorize a
@@ -313,6 +396,10 @@ class Explorer:
             # facing byte. One completed directional tap is sufficient to
             # proceed to A rather than turning forever.
             goal["face_confirmed"]=True
+        if (kind=="move" and after and tuple(after[0].map_id)==tuple(f.map_id)
+                and tuple(after[0].pos)==tuple(goal["target"])
+                and tuple(f.pos)!=tuple(goal["target"]) and goal.get("retry")):
+            goal["reentered"]=True
         if kind=="cross":
             meta["pending_crossing"]={"from":list(f.map_id),"destination":goal["event"]["destination"],"event":goal["event"]["id"]}
         if kind in ("interact","cross") or not after or after[0].map_id!=f.map_id or (expected is not None and after[0].pos!=expected):

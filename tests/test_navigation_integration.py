@@ -258,12 +258,13 @@ class NativeRecoveryIntegrationTests(unittest.TestCase):
                 stack.enter_context(patch("core.autoplay.open_profile",return_value=(None,None)))
                 status,meta,rgb=play(runner,root/"rom",sha,
                     "continue story",root,model,max_decisions=2)
-        self.assertEqual(status,"NEEDS_REVIEW")
-        self.assertEqual(model.calls,0)
-        self.assertEqual(meta["decisions"],1)
+        self.assertEqual(status,"BUDGET_REACHED")
+        self.assertEqual(model.calls,1)
+        self.assertEqual(meta["decisions"],2)
         self.assertNotIn("action_batch",meta)
-        self.assertEqual(meta["review"]["scene"],"native_navigation_exhausted")
-        self.assertIn("Qwen movement disabled",meta["review"]["reason"])
+        self.assertEqual(meta["history"][-1]["source"],"native_strategic_recheck")
+        self.assertEqual(meta["history"][-1]["actions"],[{"button":"WAIT","frames":16}])
+        self.assertEqual(meta["field_strategic_referral"]["calls"],1)
 
     def test_production_navigation_leg_interrupted_by_battle_is_replanned(self):
         from core.firered import Field
