@@ -25,7 +25,9 @@ bounded momentum plan: **four steps total** under partial field corroboration,
 or **ten steps total** only after fully verified native field movement.
 Each additional movement gets its own screen check and durable checkpoint;
 a stationary screen, unexpected image change, dialogue, battle, menu or
-operator intervention immediately discards the rest.\n\nThe conservative pixel guard can stop after one input; it is not a classifier
+operator intervention immediately discards the rest.
+
+The conservative pixel guard can stop after one input; it is not a classifier
 that proves a location is safe. **No unverified sequence containing A, START,
 B, item use or battle choices is cached.** Unverified menus and battles now
 execute only the first proposed vision action, obtaining a fresh observation
