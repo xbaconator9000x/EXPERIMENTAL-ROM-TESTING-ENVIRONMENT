@@ -92,6 +92,12 @@ class OperatorControl:
         if cmd.get("expected_screen") and digest(rgb)!=cmd["expected_screen"]:
             raise ValueError("Stale screen witness")
         state=None
+        if op in ("restore","input","soft_reset","hard_reset"):
+            # Every forced mutation has an immutable pre-operation generation.
+            # It is not the ordinary progress file and cannot replace it.
+            before=self.states/("before-"+str(comment_id)+".bin")
+            if before.exists() or before.is_symlink():raise ValueError("Duplicate operator command")
+            save_progress(before,self.identity,copy.deepcopy(meta),live.save_state(),rgb)
         if op=="snapshot":
             name=cmd["args"]["name"]
             dest=self.states/(name+".bin")
@@ -102,14 +108,14 @@ class OperatorControl:
             source=self.states/(name+".bin")
             saved=load_progress(source,self.identity)
             if saved is None:raise ValueError("Named checkpoint absent")
-            # Pre-restore witness is immutable, unique to the GitHub comment.
-            before=self.states/("before-"+str(comment_id)+".bin")
-            if before.exists():raise ValueError("Duplicate restore id")
-            save_progress(before,self.identity,copy.deepcopy(meta),live.save_state(),rgb)
             old_meta,state,old_rgb=saved
             live.load_state(state)
             verified=live.rgb()
-            if verified!=old_rgb:raise ValueError("Loaded LCD witness differs")
+            if verified!=old_rgb:
+                # Do not silently accept a different screen as the restored state.
+                safe=load_progress(before,self.identity)
+                if safe is not None:live.load_state(safe[1])
+                raise ValueError("Loaded LCD witness differs")
             meta=old_meta;rgb=verified
             self.review=False
         elif op=="input":
@@ -133,8 +139,12 @@ class OperatorControl:
                 newstate=new.save_state()
             except BaseException:
                 new.close();raise
-            live.close();live=new;rgb=newrgb
-            meta={"decisions":0,"frames":120,"history":[],"operator_new_boot":True}
+            newmeta={"decisions":0,"frames":120,"history":[],"operator_new_boot":True}
+            # Never close the known working native process until the fresh
+            # boot and its durable progress file have both succeeded.
+            save_progress(self.folder/("upstream-progress.bin" if "upstream" in self.identity else "progress.bin"),
+                          self.identity,newmeta,newstate,newrgb)
+            live.close();live=new;rgb=newrgb;meta=newmeta
             self.review=False
         elif op=="pause":
             self.paused=True
@@ -166,6 +176,12 @@ class OperatorControl:
                 live,meta,rgb,op=self.apply(comment_id,cmd,live,meta,rgb)
                 changed|=op in ("input","restore","soft_reset","hard_reset","pause","resume")
             except (ValueError,OSError,RuntimeError) as exc:
+                # An error during native control must not let the autonomous
+                # planner immediately make a second unverified input.
+                self.paused=True
+                self.review=True
+                try:self.persist({"comment_id":comment_id,"action":cmd["action"],"result":"FAILED"},meta,rgb)
+                except (OSError,ValueError):pass
                 self.ack(comment_id,"FAILED",cmd["action"],meta,rgb,reason=type(exc).__name__)
         return live,meta,rgb,changed
 
