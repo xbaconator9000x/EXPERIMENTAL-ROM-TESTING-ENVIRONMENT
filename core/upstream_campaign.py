@@ -150,7 +150,16 @@ def campaign(runner,rom,sha,checkout,folder,model,goal,max_decisions,should_stop
             meta.pop("model_error",None)
             try:
                 result=session.execute(name,args)
-                after=live.rgb();next_state=live.save_state()
+                if result.startswith("SKILL_STOPPED:"):
+                    # A rejected skill may have already issued native inputs.
+                    # Restore the last immutable checkpoint before proceeding.
+                    live.load_state(state)
+                    if live.rgb()!=rgb:
+                        raise LiveError("rejected skill checkpoint LCD mismatch")
+                    after=rgb
+                    next_state=state
+                else:
+                    after=live.rgb();next_state=live.save_state()
             except (LiveError,OSError) as exc:
                 meta["failed_skill"]={"name":name,"args":args,"error":str(exc)[:200]}
                 save_progress(path,identity,meta,state,rgb)
