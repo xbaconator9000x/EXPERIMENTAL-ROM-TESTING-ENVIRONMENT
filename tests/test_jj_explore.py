@@ -69,6 +69,25 @@ class TestExplorer(unittest.TestCase):
         self.assertEqual(diagnostics(meta)["maps"],0)
         self.assertNotIn("event_goal",meta)
 
+    def test_battle_interruption_replans_without_blacklisting_story_target(self):
+        f,npc,warp=self.setup()
+        c=(f,0x08001235,{(3,1)})
+        ex=Explorer(MockAdapter());meta={};info=([npc,warp],"RIGHT")
+        self.assertTrue(ex.request(c,meta,info,"interact"))
+        attempt,cmd=ex.next(c,meta,info)
+        self.assertEqual(attempt["actions"][0]["button"],"RIGHT")
+        ex.finish(meta,c,None,cmd,interrupted=True)
+        self.assertNotIn("event_goal",meta)
+        self.assertEqual(meta.get("event_attempts",[]),[])
+        self.assertEqual(meta["skill_interruptions"][-1]["reason"],"battle")
+        # On the same map the agent must be able to recalculate its path.
+        self.assertTrue(ex.request(c,meta,info,"interact"))
+        self.assertIsNotNone(ex.next(c,meta,info))
+        self.assertTrue(ex.interrupt(meta,"battle"))
+        self.assertFalse(ex.interrupt(meta,"battle"))
+        self.assertFalse(ex.interrupt(meta,"unexpected"))
+        self.assertEqual(len(meta["skill_interruptions"]),2)
+
     def test_previously_attempted_filtered(self):
         f,npc,warp=self.setup()
         self.assertTrue(all(c[4]["kind"]=="warp" for c in options(f,{(3,1)},[npc,warp],[event_key(f,npc)])))
