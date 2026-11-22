@@ -493,8 +493,20 @@ class TestExplorer(unittest.TestCase):
         d,cmd=ex.next(c,m,([npc,warp],"DOWN"))
         changed=Field((3,4),(0,0),5,5,f.tiles)
         ex.finish(m,c,(changed,1,set()),cmd)
-        self.assertEqual(m["map_transitions"][0]["to"],[3,4])
+        # An unexpected map change on the *approach* cannot be credited to
+        # the unreached warp; independently observed transitions stay valid.
+        self.assertNotIn("map_transitions",m)
+        self.assertEqual(m.get("event_attempts",[]),[])
+        self.assertEqual(m["skill_interruptions"][-1]["reason"],"transition")
         self.assertNotIn("event_goal",m)
+        # Actual step onto the target warp is correctly attributed.
+        entry=Field(f.map_id,(4,3),f.width,f.height,f.tiles)
+        at=(entry,1,{(3,1)})
+        self.assertTrue(ex.request(at,m,([npc,warp],"DOWN"),"exit"))
+        _,cmd=ex.next(at,m,([npc,warp],"DOWN"))
+        self.assertEqual(cmd,("move",(4,4)))
+        ex.finish(m,at,(changed,1,set()),cmd)
+        self.assertEqual(m["map_transitions"][0]["to"],[3,4])
     def test_native_short_tap_calibrates_then_reroutes_around_bumped_tile(self):
         from core.jj_tile_memory import blocked_tiles,failures
         f,npc,warp=self.setup()
