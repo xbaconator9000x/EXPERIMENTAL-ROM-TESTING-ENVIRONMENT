@@ -17,7 +17,7 @@ import urllib.error
 import zlib
 from pathlib import Path
 from core.live import Live, LiveError
-from core.action_batch import prepare as prepare_action_batch, take as take_action_batch, observe as observe_action_batch, invalidate as invalidate_action_batch
+from core.action_batch import prepare as prepare_action_batch, momentum as momentum_action_batch, take as take_action_batch, observe as observe_action_batch, invalidate as invalidate_action_batch
 from core.navigation_memory import record as record_navigation, propose as propose_navigation, unsafe_repeat as unsafe_navigation, learned_context as learned_navigation
 from core.gameplay import TYPES, clean_observation, policy, remember, memory_context
 from core.rom_catalog import try_catalog
@@ -329,7 +329,10 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             decision=guidance(meta,screen)
             cached=None
             if decision is None:
-                cached=take_action_batch(meta,rgb,allowed=(battle_before is None and menu_before is None and not (control and (control.paused or control.review))))
+                cached=take_action_batch(meta,rgb,allowed=(battle_before is None and menu_before is None
+                    and ordinary_dialogue(rgb) is None and not meta.get("menu_intent")
+                    and (sha not in JJ_RELEASES or nav_allowed)
+                    and not (control and (control.paused or control.review))))
                 if cached:decision=cached
             else:
                 invalidate_action_batch(meta)
@@ -451,7 +454,19 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     decision={**decision,"actions":[]};nav_blocked=True
             batch_pending=None
             if source.startswith("vision") and not decision["review"]:
-                decision,batch_pending=prepare_action_batch(decision,source,battle=(battle_before is not None),menu=(menu_before is not None))
+                # After two observed steps in the same direction, let the
+                # existing per-step visual guard execute a few more steps
+                # without another vision inference. A fully verified native
+                # field permits up to ten; a read-only partial witness caps at
+                # four. Either mode stops on changed scene, fade or collision.
+                decision,batch_pending=momentum_action_batch(
+                    decision,source,history,field_witness=nav_allowed,
+                    native_verified=adapter.verified_field(field_before,meta),
+                    battle=(battle_before is not None),menu=(menu_before is not None))
+                if batch_pending is None:
+                    decision,batch_pending=prepare_action_batch(
+                        decision,source,field_witness=nav_allowed,
+                        battle=(battle_before is not None),menu=(menu_before is not None))
             actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route","native_explore","native_menu","native_battle_wait","field_recovery","batch_navigation") else choose(decision,history,screen)
             # A tested, direction-specific loop observation must override a
             # fresh model suggestion that simply retraces the same route.
