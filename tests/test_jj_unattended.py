@@ -1,5 +1,5 @@
 import unittest
-from core.jj_unattended import cycle,recovery,quarantine,quarantined,quest_state,replay
+from core.jj_unattended import cycle,oscillation,recovery,quarantine,quarantined,quest_state,replay
 from core.live import LiveError
 
 def history():
@@ -16,6 +16,46 @@ class Tests(unittest.TestCase):
         self.assertNotEqual(first["actions"][0]["button"],second["actions"][0]["button"])
         for i in range(6):self.assertIsNotNone(recovery(m,"a",rgb))
         self.assertIsNone(recovery(m,"a",rgb))
+    def test_stale_dialogue_label_cannot_disable_proved_navigation_recovery(self):
+        # Reproduce campaign #23 around decision 174: visually two different
+        # overworld positions but the vision model keeps the obsolete
+        # "native_dialogue" scene label and alternates UP/DOWN indefinitely.
+        h=[]
+        for i in range(12):
+            h.append({"before":"a" if i%2==0 else "b",
+                      "after":"b" if i%2==0 else "a",
+                      "scene":"native_dialogue",
+                      "observed_stage":"dialogue",
+                      "actions":[{"button":"DOWN" if i%2==0 else "UP","frames":16}]})
+        self.assertFalse(__import__("core.jj_unattended",fromlist=["field_hint"]).field_hint(h))
+        loop=oscillation(h,"a")
+        self.assertEqual(loop["avoid_button"],"DOWN")
+        self.assertEqual(loop["repetitions"],6)
+        # Without an independent native movement witness, the stale label
+        # cannot authorize blind controls in a potentially interactive menu.
+        self.assertIsNone(recovery({"history":h},"a",bytes(115200)))
+        meta={"history":h,"field_proof":{"callback":0x08001235,"directions":["LEFT"]}}
+        decision=recovery(meta,"a",bytes(115200))
+        self.assertIsNotNone(decision)
+        self.assertIn(decision["actions"][0]["button"],("LEFT","RIGHT"))
+        self.assertNotIn(decision["actions"][0]["button"],("UP","DOWN"))
+        self.assertEqual(len(meta["recovery"]["attempts"]),1)
+
+    def test_oscillation_requires_real_directional_transitions(self):
+        h=[{"before":"a" if i%2==0 else "b","after":"b" if i%2==0 else "a",
+            "actions":[{"button":"DOWN" if i%2==0 else "UP","frames":16}]}
+           for i in range(8)]
+        self.assertIsNotNone(oscillation(h,"a"))
+        self.assertIsNone(oscillation(h[:5],"b"))
+        self.assertIsNone(oscillation([{**r,"actions":[{"button":"A","frames":5}]} for r in h],"a"))
+        self.assertIsNone(oscillation([{**r,"before":r["after"]} for r in h],"a"))
+        self.assertIsNone(oscillation(h,"unrelated"))
+        # Having a native witness does not justify skipping real dialogue.
+        from unittest.mock import patch
+        with patch("core.jj_unattended.ordinary_dialogue",return_value="page"):
+            self.assertIsNone(recovery({"history":h,
+                "field_proof":{"callback":0x08001235,"directions":["LEFT"]}},"a",bytes(115200)))
+
     def test_menu_not_blindly_pressed(self):
         h=history();h[-1]["observed_stage"]="menu"
         self.assertIsNone(recovery({"history":h},"a",bytes(115200)))
