@@ -95,6 +95,23 @@ def campaign(runner,rom,sha,checkout,folder,model,goal,max_decisions,should_stop
             live.step(0,120);state=live.save_state();rgb=live.rgb()
             meta={"decisions":0,"frames":120,"history":[]}
             save_progress(path,identity,meta,state,rgb)
+        def operator_recover():
+            nonlocal live
+            # The failing skill may have partially advanced its emulator.
+            # Reload only the previously committed native checkpoint.
+            try:
+                live.close()
+                live=Live(runner,rom,sha)
+                live.load_state(state)
+                session.transport.live=live
+                if live.rgb()!=rgb:
+                    raise LiveError("checkpoint LCD changed")
+                control.review=True
+                newlive,newmeta,newrgb,_=control.serve(live,meta,rgb,should_stop)
+                session.transport.live=newlive
+                return newlive,newmeta,newrgb
+            except (LiveError,OSError,ValueError):
+                return None
         segment_frames=120
         report("RUNNING",meta,rgb)
         while meta["decisions"]<max_decisions and not should_stop():
@@ -137,7 +154,14 @@ def campaign(runner,rom,sha,checkout,folder,model,goal,max_decisions,should_stop
             except (LiveError,OSError) as exc:
                 meta["failed_skill"]={"name":name,"args":args,"error":str(exc)[:200]}
                 save_progress(path,identity,meta,state,rgb)
-                report("EMULATOR_ERROR",meta,rgb);return "EMULATOR_ERROR",meta,rgb
+                report("EMULATOR_ERROR",meta,rgb)
+                if control:
+                    recovered=operator_recover()
+                    if recovered:
+                        live,meta,rgb=recovered
+                        if should_stop():break
+                        continue
+                return "EMULATOR_ERROR",meta,rgb
             except Exception as exc:
                 # An unexpected upstream skill failure may have partially
                 # advanced the live emulator. Never checkpoint that unknown
@@ -147,6 +171,12 @@ def campaign(runner,rom,sha,checkout,folder,model,goal,max_decisions,should_stop
                     "error_type":type(exc).__name__,"category":"UPSTREAM_SKILL_ERROR"}
                 save_progress(path,identity,meta,state,rgb)
                 report("UPSTREAM_SKILL_ERROR",meta,rgb)
+                if control:
+                    recovered=operator_recover()
+                    if recovered:
+                        live,meta,rgb=recovered
+                        if should_stop():break
+                        continue
                 return "UPSTREAM_SKILL_ERROR",meta,rgb
             frames=session.transport.frames
             entry={"decision":meta["decisions"]+1,"before":digest(rgb),"after":digest(after),
