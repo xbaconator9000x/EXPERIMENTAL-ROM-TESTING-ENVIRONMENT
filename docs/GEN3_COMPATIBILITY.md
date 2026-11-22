@@ -26,3 +26,17 @@ Only numeric symbol facts used; no PokéBot GPL gameplay code copied.
 
 All profiles still require actual native visual/position/party evidence.
 No native retail gameplay acceptance is established by fixture CI.
+
+## ROM-hack map compatibility evidence
+Exact-hash Jessie & James field maps receive a one-time, read-only native
+MapHeader/MapEvents pointer-and-count audit after verified movement. The audit
+checks object, warp, coordinate, background, and map script structures against
+pret/pokefirered layouts. It understands hidden-item union metadata and
+reports custom event kinds as unclassified. Only aggregate structural status
+and counts enter private ROM-AUTOPLAY diagnostic reports; no game contents,
+script bytes, addresses, paths, saves, or ROMs are uploaded.
+
+STRUCTURALLY_READABLE applies solely to the observed map's layout and pointers,
+not to script opcode semantics, battle, quest progression or the entire ROM.
+Native Windows end-to-end compatibility must be demonstrated separately.
+The audit adds no controller inputs, model calls, or mutable game state.

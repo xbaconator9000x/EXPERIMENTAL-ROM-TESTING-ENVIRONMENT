@@ -1,0 +1,82 @@
+"""Read-only, exact-release map structure audit for a running Jessie & James hack.
+
+The probed map is NOT declared gameplay-compatible. Addresses and contents
+remain on the owner-controlled Windows host.
+"""
+from core.firered import span
+from core.jj_fast import MAP_HEADER
+from core.live import LiveError
+
+ROM_BASE=0x08000000
+STRIDES=(24,8,16,12)
+NAMES=("objects","warps","coordinates","backgrounds")
+
+def inspect_map(live,rom_size,field,map_header=MAP_HEADER):
+    if field is None or not 0<rom_size<=32*1024*1024:
+        raise ValueError("UNVERIFIED_FIELD_OR_ROM")
+    def romread(ptr,size,align=False):
+        if (type(ptr) is not int or (align and ptr%4)
+                or not span(ptr,size,ROM_BASE,ROM_BASE+rom_size)):
+            raise ValueError("INVALID_ROM_POINTER")
+        return live.read(ptr,size)
+    def u(data,offset,size=4):
+        return int.from_bytes(data[offset:offset+size],"little")
+    def tile(data,offset):
+        x=u(data,offset,2);y=u(data,offset+2,2)
+        if not (0<=x<field.width and 0<=y<field.height):
+            raise ValueError("INVALID_EVENT_COORDINATE")
+    scripts=0
+    nulls=0
+    def script(ptr):
+        nonlocal scripts,nulls
+        if not ptr:
+            nulls+=1
+        else:
+            romread(ptr,1)
+            scripts+=1
+    header=live.read(map_header,28)
+    if len(header)!=28:raise ValueError("INVALID_MAP_HEADER")
+    table=romread(u(header,4),20,True)
+    counts=tuple(table[:4])
+    if any(x>64 for x in counts):raise ValueError("INVALID_EVENT_COUNT")
+    arrays=[romread(u(table,4+i*4),n*STRIDES[i],True) if n else b""
+            for i,n in enumerate(counts)]
+    unknown=0
+    for i in range(counts[0]):
+        off=i*24;kind=arrays[0][off+2]
+        if kind==0:script(u(arrays[0],off+16))
+        elif kind!=1:unknown+=1
+    for i in range(counts[1]):tile(arrays[1],i*8)
+    for i in range(counts[2]):
+        off=i*16;tile(arrays[2],off);script(u(arrays[2],off+12))
+    hidden=0
+    for i in range(counts[3]):
+        off=i*12;tile(arrays[3],off);kind=arrays[3][off+5]
+        if kind<=4:script(u(arrays[3],off+8))
+        elif kind==7:hidden+=1
+        elif kind!=8:unknown+=1
+    map_scripts=0
+    ptr=u(header,8)
+    if ptr:
+        for i in range(64):
+            row=romread(ptr+i*5,5)
+            if row[0]==0:break
+            map_scripts+=1;script(u(row,1))
+        else:raise ValueError("UNTERMINATED_MAP_SCRIPT_TABLE")
+    return {"status":"UNCLASSIFIED_EVENT_KINDS" if unknown else "STRUCTURALLY_READABLE",
+            "map":list(field.map_id),"counts":dict(zip(NAMES,counts)),
+            "checked_script_pointers":scripts,"null_script_pointers":nulls,
+            "hidden_items":hidden,"map_script_entries":map_scripts,
+            "unknown_event_kinds":unknown,"script_semantics_verified":False,
+            "gameplay_compatibility_verified":False}
+
+def safe_map_audit(live,rom_size,field):
+    try:return inspect_map(live,rom_size,field)
+    except (ValueError,LiveError,OSError,IndexError,TypeError) as exc:
+        code=str(exc) if isinstance(exc,ValueError) else "NATIVE_READ_FAILED"
+        if code not in {"UNVERIFIED_FIELD_OR_ROM","INVALID_ROM_POINTER",
+                        "INVALID_EVENT_COORDINATE","INVALID_EVENT_COUNT",
+                        "INVALID_MAP_HEADER","UNTERMINATED_MAP_SCRIPT_TABLE"}:
+            code="NATIVE_READ_FAILED"
+        return {"status":"STRUCTURE_READ_FAILED","reason":code,
+                "script_semantics_verified":False,"gameplay_compatibility_verified":False}

@@ -363,6 +363,7 @@ def diagnostic(adapter,battles,menus,field,meta):
             "catalog":battles.catalog is not None,"inventory":battles.field_inventory,
             "bag_candidate":menus.bag_ok,"party_candidate":menus.party_ok,
             "event_probe":meta.get("native_event_probe"),
+            "rom_hack_map_compat":meta.get("rom_hack_map_compat"),
             "event_witnesses":meta.get("native_event_witnesses",[])[-3:],
             "native_retry":{k:v for k,v in meta.get("native_revisit",{}).items()
                  if k in ("epoch","approaches","sweeps","status")},

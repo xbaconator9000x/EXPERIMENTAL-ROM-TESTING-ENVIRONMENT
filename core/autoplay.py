@@ -27,6 +27,7 @@ from core.jj_battle import BattleAdapter
 from core.gen3_profiles import open_profile, VanillaField, VanillaBattle
 from core.native_acceptance import Acceptance
 from core.jj_explore import Explorer, native_event_settle
+from core.jj_compat import safe_map_audit
 from core.jj_world_model import observe as world_observe, task as world_task, summary as world_summary, complete as world_complete
 from core.jj_tile_memory import refresh_on_verified_arrival, confirm_native_position
 from core.jj_menus import MenuDriver,intent_from_battle
@@ -338,6 +339,18 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 confirm_native_position(meta,field_before[0].map_id,
                                         field_before[0].pos,verified=True)
             events=explorer.inspect(field_before,meta)
+            # One read-only ROM-hack map probe per independently witnessed
+            # map. Never upload memory, script bytes or pointer addresses.
+            if sha in JJ_RELEASES and adapter.admitted and field_verified and field_before:
+                map_key=":".join(map(str,field_before[0].map_id))
+                audits=meta.get("rom_hack_map_audits")
+                if not isinstance(audits,dict):
+                    audits={};meta["rom_hack_map_audits"]=audits
+                if map_key not in audits:
+                    audits[map_key]=safe_map_audit(live,adapter.size,field_before[0])
+                    if len(audits)>64:
+                        for old in list(audits)[:-64]:audits.pop(old,None)
+                meta["rom_hack_map_compat"]=audits[map_key]
             # Only actual native movement proof can update the world graph.
             if sha in JJ_RELEASES and field_verified:
                 world_observe(meta,field_before,events[0] if events else None,
