@@ -661,11 +661,17 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 route=adapter.route_action(field_before,meta)
                 if route:decision,route_expected=route;source="native_route"
             if strategic_field and source.startswith("vision"):
-                decision={"scene":"native_strategic_recheck",
-                          "objective":"Resume native navigation after strategic visual consultation",
-                          "actions":[{"button":"WAIT","frames":16}],"review":False}
-                source="native_strategic_recheck"
-            planned=policy(obs,goal,history,screen) if not decision["review"] and source not in ("remote_guidance","native_route","fast_dialogue","native_battle","native_explore","native_scout","native_menu","native_battle_wait","field_recovery") else None
+                guarded=(explorer.guarded_visual(field_before,meta,events,decision)
+                         if hasattr(explorer,"guarded_visual") else None)
+                if guarded:
+                    decision=guarded
+                    source="native_guarded_visual"
+                else:
+                    decision={"scene":"native_strategic_recheck",
+                              "objective":"Resume native navigation after strategic visual consultation",
+                              "actions":[{"button":"WAIT","frames":16}],"review":False}
+                    source="native_strategic_recheck"
+            planned=policy(obs,goal,history,screen) if not decision["review"] and source not in ("remote_guidance","native_route","fast_dialogue","native_battle","native_explore","native_scout","native_menu","native_battle_wait","native_guarded_visual","native_strategic_recheck","field_recovery") else None
             if planned and planned[0]:
                 decision={**decision,"actions":planned[0],"objective":planned[1][:240]};source="pokemon_policy"
             nav_blocked=False
@@ -692,7 +698,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     decision,batch_pending=prepare_action_batch(
                         decision,source,field_witness=nav_allowed,
                         battle=(battle_before is not None),menu=(menu_before is not None))
-            actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route","native_explore","native_scout","native_menu","native_battle_wait","native_script_settle","native_strategic_recheck","field_recovery","batch_navigation") else choose(decision,history,screen)
+            actions=decision["actions"] if source in ("remote_guidance","native_battle","native_route","native_explore","native_scout","native_menu","native_battle_wait","native_script_settle","native_strategic_recheck","native_guarded_visual","field_recovery","batch_navigation") else choose(decision,history,screen)
             # A tested, direction-specific loop observation must override a
             # fresh model suggestion that simply retraces the same route.
             # Bounded recovery is tried first, above; when exhausted, park
@@ -792,7 +798,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 meta["menu_intent"]["remaining"]-=1
                 if meta["menu_intent"]["remaining"]<=0:meta.pop("menu_intent",None)
             field_after=adapter.candidate(after)
-            if source.startswith("vision") or source in ("remote_guidance","field_recovery","batch_navigation"):adapter.observe_move(field_before,field_after,actions,meta)
+            if source.startswith("vision") or source in ("remote_guidance","field_recovery","batch_navigation","native_guarded_visual"):adapter.observe_move(field_before,field_after,actions,meta)
             if meta.get("action_batch"):
                 proved=adapter.verified_field(field_before,meta)
                 # Even before two-direction proof, a structurally valid native

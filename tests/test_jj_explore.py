@@ -75,6 +75,28 @@ class TestExplorer(unittest.TestCase):
         self.assertIsNone(ex.next(candidate,meta,info))
         self.assertNotIn("event_goal",meta)
 
+    def test_guarded_visual_is_single_step_and_native_collision_checked(self):
+        from core.firered import Field
+        ex=Explorer(MockAdapter())
+        f=Field((43,1),(2,2),6,6,(0,)*36)
+        c=(f,0x08001235,{(1,2)})
+        info=([{"kind":"warp","x":2,"y":1,"id":0},
+               {"kind":"npc","x":3,"y":2,"id":1}],None)
+        meta={}
+        proposal=lambda button,frames=16:{"review":False,
+            "actions":[{"button":button,"frames":frames}]}
+        self.assertIsNone(ex.guarded_visual(c,meta,info,proposal("UP")))
+        self.assertIsNone(ex.guarded_visual(c,meta,info,proposal("LEFT")))
+        self.assertIsNone(ex.guarded_visual(c,meta,info,
+            {"review":False,"actions":[{"button":"DOWN","frames":16},
+                                      {"button":"DOWN","frames":16}]}))
+        decision=ex.guarded_visual(c,meta,info,proposal("DOWN",120))
+        self.assertEqual(decision["actions"],[{"button":"DOWN","frames":16}])
+        self.assertEqual(decision["scene"],"native_guarded_visual")
+        self.assertIsNone(ex.guarded_visual(c,meta,([],None),proposal("A")))
+        self.assertEqual(ex.guarded_visual(c,meta,info,proposal("A"))["actions"],
+                         [{"button":"A","frames":5}])
+
     def test_native_event_probe_distinguishes_unverified_rejected_and_readable(self):
         from unittest.mock import patch
         f,npc,warp=self.setup()

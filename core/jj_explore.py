@@ -12,7 +12,7 @@ FACING={1:"DOWN",2:"UP",3:"LEFT",4:"RIGHT"}
 # Only after a full native event/frontier pass do we try previously attempted
 # events again. The retry budget is *event approaches*, not repeated idle polls.
 NATIVE_RETRY_APPROACHES=24
-NATIVE_RETRY_PER_TARGET=8
+NATIVE_RETRY_PER_TARGET=12
 
 def event_targets(live,rom_size,field,map_header=MAP_HEADER,object_base=OBJECTS,vmap=None):
     """Only expose in-map coordinates from structurally checked ROM pointers."""
@@ -222,6 +222,45 @@ class Explorer:
         state["approaches"]=0
         state["per_target"]={}
         state["status"]="fresh_native_sweep_after_strategic_check"
+
+    def guarded_visual(self,candidate,meta,info,proposal):
+        """One last-resort vision suggestion, independently checked natively.
+
+        No visual multi-step paths or wall/warp/NPC guesses can be executed.
+        A proposal may move ONE passable grid tile (verified against current
+        collision/objects/map triggers) or interact with a nearby observed
+        story object. Native coordinates will corroborate the result.
+        """
+        if (not candidate or not info
+                or not self.adapter.verified_field(candidate,meta)
+                or not isinstance(proposal,dict) or proposal.get("review")):
+            return None
+        f,_,occupied=candidate
+        events,_=info
+        actions=proposal.get("actions",[])
+        if not isinstance(actions,list) or len(actions)!=1:return None
+        action=actions[0]
+        if not isinstance(action,dict) or type(action.get("frames")) is not int:return None
+        key=action.get("button")
+        if key in DIR:
+            dx,dy=DIR[key];nxt=(f.pos[0]+dx,f.pos[1]+dy)
+            unsafe={(e["x"],e["y"]) for e in events if
+                    isinstance(e,dict) and e.get("kind") in ("warp","coord")}
+            if (not f.passable(*nxt) or nxt in occupied or nxt in unsafe
+                    or nxt in blocked_tiles(meta,f.map_id)):return None
+            frames=min(16,max(1,action["frames"]))
+            return {"scene":"native_guarded_visual",
+                    "objective":"Native-validated last-resort visual step",
+                    "actions":[{"button":key,"frames":frames}],"review":False}
+        if key=="A":
+            neighbors={(f.pos[0]+dx,f.pos[1]+dy) for dx,dy in DIR.values()}
+            if not any((e.get("x"),e.get("y")) in neighbors
+                       and e.get("kind") in ("npc","bg")
+                       for e in events if isinstance(e,dict)):return None
+            return {"scene":"native_guarded_visual",
+                    "objective":"Last-resort interaction with observed native object",
+                    "actions":[{"button":"A","frames":5}],"review":False}
+        return None
 
     def next(self,candidate,meta,info):
         goal=meta.get("event_goal")
