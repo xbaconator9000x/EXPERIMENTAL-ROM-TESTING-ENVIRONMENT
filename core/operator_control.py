@@ -68,6 +68,12 @@ class OperatorControl:
         self.review=False
         self.reported_pause=False
         self.status_path=self.folder/"operator-status.json"
+        if self.status_path.is_file() and not self.status_path.is_symlink() and self.status_path.stat().st_size<=4096:
+            try:
+                previous=json.loads(self.status_path.read_text(encoding="utf-8"))
+                if previous.get("rom_sha256")==sha and type(previous.get("paused")) is bool:
+                    self.paused=previous["paused"]
+            except (ValueError,OSError):pass
         self.command_log=self.folder/"operator-audit.jsonl"
         self.states=self.folder/"operator-states"
         self.states.mkdir(exist_ok=True)
@@ -80,7 +86,7 @@ class OperatorControl:
 
     def persist(self,event,meta,rgb):
         # No save data, passwords, absolute paths or arbitrary model responses.
-        row={"utc":int(time.time()),"event":event,"screen":digest(rgb),"decisions":meta["decisions"],"paused":self.paused}
+        row={"utc":int(time.time()),"event":event,"screen":digest(rgb),"decisions":meta["decisions"],"paused":self.paused,"rom_sha256":self.sha}
         tmp=self.status_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(row,separators=(",",":")),encoding="utf-8")
         os.replace(tmp,self.status_path)
