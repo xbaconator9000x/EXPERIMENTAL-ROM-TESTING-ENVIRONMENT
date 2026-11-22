@@ -402,12 +402,18 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     event=explorer.next(field_before,meta,events)
                     if event:decision,event_command=event;source="native_explore"
                     else:meta.pop("event_goal",None)
-                if (decision is None and sha in JJ_RELEASES and field_verified
-                        and verified_party is not None and events):
-                    # Reuse the existing A* skill executor. Qwen supplies
-                    # goals for unfamiliar situations; on a verified map the
-                    # deterministic player can seek a starter NPC or new exit.
-                    intent=world_task(meta,verified_party,events[0])
+                if (decision is None and sha in JJ_RELEASES and field_verified and events):
+                    # A missing party snapshot must not force expensive vision
+                    # wandering when the player has a verified field and
+                    # reachable, ROM-derived NPC events. Before the initial
+                    # party, a bounded NPC interaction is preferable to
+                    # arbitrary movements. Only observed events are eligible.
+                    if verified_party is not None:
+                        intent=world_task(meta,verified_party,events[0])
+                    elif meta.get("objective_state",{}).get("phase")=="obtain_initial_party":
+                        intent="interact"
+                    else:
+                        intent=None
                     if intent and explorer.request(field_before,meta,events,intent):
                         event=explorer.next(field_before,meta,events)
                         if event:
