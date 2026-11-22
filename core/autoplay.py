@@ -37,7 +37,7 @@ from core.jj_tile_memory import refresh_on_verified_arrival, confirm_native_posi
 from core.jj_menus import MenuDriver,intent_from_battle
 from core.jj_runtime import NATIVE, animation_wait, record_field, count_decision, recovery_allowed
 from core.jj_connections import observe_arrival
-from core.jj_unattended import recovery, oscillation, field_hint, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id, bootstrap, vision_stall, script_settle, exceptional_vision, field_strategic_referral, rearm_after_script_recovery
+from core.jj_unattended import recovery, oscillation, field_hint, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id, bootstrap, vision_stall, script_settle, exceptional_vision, field_strategic_referral, rearm_after_script_recovery, legacy_script_resume_candidate
 
 BUTTONS={"A":1,"B":2,"SELECT":4,"START":8,"RIGHT":16,"LEFT":32,"UP":64,"DOWN":128,"R":256,"L":512,"WAIT":0}
 SCHEMA={"type":"object","additionalProperties":False,"required":["scene","objective","actions","review"],"properties":{
@@ -286,6 +286,13 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
         save_progress(path,identity,meta0,state0,rgb0)
     meta={"decisions":0,"frames":0,"history":[]}
     if prior:meta,state,rgb=prior
+    if prior and legacy_script_resume_candidate(meta):
+        # Upgrade only the exact legacy state stranded AFTER an A-advanced
+        # scripted conversation. Native callback/map and lock release must
+        # still be rechecked before any navigation budget is reset.
+        meta["recovery_resume"]={"kind":"native_script_locked",
+                                 "phase":"pending",
+                                 "source":"legacy_checkpoint"}
     # Older checkpoints are compatible: a queued plan is always optional and
     # will be checked against its exact prior screenshot before reuse.
     catalog=try_catalog(rom,sha,goal)
