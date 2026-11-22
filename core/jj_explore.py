@@ -70,7 +70,19 @@ class Explorer:
         try:
             info=event_targets(self.adapter.live,self.adapter.size,candidate[0],getattr(self.adapter,"map_header",MAP_HEADER),getattr(self.adapter,"objects",OBJECTS),getattr(self.adapter,"vmap",None))
             events,_=info
-            meta["native_event_probe"]={"status":"EVENTS_READ","counts":{kind:sum(e["kind"]==kind for e in events) for kind in ("npc","warp","connection")}}
+            field,_,occupied=candidate
+            attempted=meta.get("event_attempts",[])
+            if not isinstance(attempted,list):attempted=[]
+            choices=options(field,occupied,events,attempted,blocked_tiles(meta,field.map_id))
+            meta["native_event_probe"]={
+                "status":"EVENTS_READ",
+                "counts":{kind:sum(e["kind"]==kind for e in events) for kind in ("npc","warp","connection")},
+                "reachable":len(set(c[1] for c in choices)),
+                "attempted":sum(event_key(field,e) in attempted for e in events),
+                "event_positions":[{"kind":e["kind"],"x":e["x"],"y":e["y"]} for e in events[:16]],
+                "active_goal":bool(meta.get("event_goal")),
+                "party_count":meta.get("native_party_count")
+            }
             return info
         except (ValueError,LiveError,IndexError):
             # Keep the reader fail-closed, but expose why deterministic
