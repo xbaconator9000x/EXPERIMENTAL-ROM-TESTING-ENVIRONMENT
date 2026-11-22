@@ -27,7 +27,7 @@ from core.jj_battle import BattleAdapter
 from core.gen3_profiles import open_profile, VanillaField, VanillaBattle
 from core.native_acceptance import Acceptance
 from core.jj_explore import Explorer
-from core.jj_world_model import observe as world_observe, task as world_task, summary as world_summary
+from core.jj_world_model import observe as world_observe, task as world_task, summary as world_summary, complete as world_complete
 from core.jj_menus import MenuDriver,intent_from_battle
 from core.jj_runtime import NATIVE, animation_wait, record_field, count_decision, recovery_allowed
 from core.jj_connections import observe_arrival
@@ -406,6 +406,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                             decision,event_command=event
                             source="native_explore";meta.pop("native_route",None)
                 if (decision is None and recovery_allowed(field_before,meta,field_verified)
+                        and verified_party is not None
                         and world_task(meta,verified_party,events[0] if events else None)
                         and explorer.request(field_before,meta,events,"explore")):
                     event=explorer.next(field_before,meta,events)
@@ -627,6 +628,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if sha in JJ_RELEASES and after_verified:
                 world_observe(meta,field_after,None,verified=True,
                               decision=meta["decisions"]+1)
+                world_complete(meta,task_name="exit",observed=True)
             if source=="native_explore":explorer.finish(meta,field_before,field_after,event_command)
             observe_arrival(meta,field_after,adapter.verified_field(field_after,meta))
             if source=="native_route":
