@@ -33,7 +33,7 @@ def changed(before,after):
                 changed_blocks+=1
     return changed_blocks>=95
 
-def recover(meta,rgb,*,press,delay,permit,visual=None,report=None):
+def recover(meta,rgb,*,press,delay,permit,visual=None,report=None,witness=None):
     """Try the user-ordered ladder, then at most two visual decisions.
 
     press(button,frames) returns the post-settle RGB and checkpoints it locally.
@@ -69,7 +69,7 @@ def recover(meta,rgb,*,press,delay,permit,visual=None,report=None):
             result=press(button,4 if button in ("A","B") else 16)
             state["attempts"]+=1
             state["last_button"]=button
-            if changed(current,result):
+            if changed(current,result) or (witness is not None and witness()):
                 state["status"]="PROGRESS"
                 state["phase"]=button
                 return "PROGRESS",result
@@ -87,7 +87,7 @@ def recover(meta,rgb,*,press,delay,permit,visual=None,report=None):
         result=press(button,frames)
         state["attempts"]+=1
         state["last_button"]=button
-        if changed(current,result):
+        if changed(current,result) or (witness is not None and witness()):
             state["status"]="PROGRESS"
             return "PROGRESS",result
         current=result
