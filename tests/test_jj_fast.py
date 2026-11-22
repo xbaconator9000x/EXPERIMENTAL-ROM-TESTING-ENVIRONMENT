@@ -3,7 +3,7 @@ import unittest
 from core.jj_fast import ordinary_dialogue,quick_dialogue,decode_party,ORDERS,Adapter,SHA
 from core.firered import Field
 
-def frame(choice=False,center=False,navy=False,blank=False):
+def frame(choice=False,center=False,navy=False,blank=False,furniture=False):
     rgb=bytearray(bytes((4,8,12))*38400)
     def rect(x,y,w,h,c):
         for j in range(y,y+h):
@@ -14,6 +14,7 @@ def frame(choice=False,center=False,navy=False,blank=False):
     rect(x,153,w,6,(82,90,90))
     if not blank:
         rect(24,125,15,4,(255,255,255) if navy else (20,20,90))
+    if furniture:rect(55,65,32,20,(255,255,255))
     if choice:rect(163,40,58,4,(214,74,57));rect(163,44,58,24,(255,255,255))
     return bytes(rgb)
 def party():
@@ -34,6 +35,7 @@ class FastTests(unittest.TestCase):
         self.assertIsNone(ordinary_dialogue(bytes(115200)))
         self.assertIsNotNone(quick_dialogue(frame(),{"history":[]}))
         self.assertIsNotNone(ordinary_dialogue(frame(navy=True)))
+        self.assertIsNotNone(ordinary_dialogue(frame(navy=True,furniture=True)))
         self.assertIsNotNone(quick_dialogue(frame(navy=True),{"history":[]}))
         self.assertIsNone(ordinary_dialogue(frame(navy=True,choice=True)))
         self.assertIsNone(ordinary_dialogue(frame(navy=True,center=True)))
