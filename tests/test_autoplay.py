@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from core.autoplay import parse_decision, choose, png, save_progress, load_progress, play, title_recovery, model_error, settle_frames
+from core.autoplay import parse_decision, choose, png, save_progress, load_progress, play, title_recovery, model_error, settle_frames, OllamaVision
 from windows.autoplay import goal
 
 def decision(button="A"):
@@ -41,6 +41,29 @@ class AutoTests(unittest.TestCase):
         self.assertEqual(p[:8],b"\x89PNG\r\n\x1a\n")
         self.assertEqual(int.from_bytes(p[16:20],"big"),720)
         self.assertEqual(int.from_bytes(p[20:24],"big"),480)
+    def test_native_world_memory_reaches_local_qwen_without_an_extra_emulator(self):
+        class Response:
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def read(self,n):
+                return json.dumps({"message":{"content":json.dumps(decision())}}).encode()
+        class Opener:
+            payload=None
+            def open(self,request,timeout):
+                self.payload=json.loads(request.data)
+                return Response()
+        model=OllamaVision()
+        model.opener=Opener()
+        model.world_reference={"confirmed_maps":3,"verified_edges":2,
+             "recent_positions":[{"map":"1:2","pos":[3,4],"decision":5}]}
+        result=model._decide(bytes(115200),"continue",[],[],{},model.model,False)
+        self.assertEqual(result,decision())
+        message=json.loads(model.opener.payload["messages"][1]["content"])
+        self.assertEqual(message["visited_world"],model.world_reference)
+        self.assertIsNone(message["native_field"])
+        self.assertEqual(model.opener.payload["messages"][1]["images"][0][:8],
+                         "iVBORw0K")
+
     def test_persistent_loop(self):
         with tempfile.TemporaryDirectory() as d:
             folder=Path(d);runner=folder/"runner";runner.write_bytes(b"fake")
