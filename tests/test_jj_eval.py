@@ -101,27 +101,27 @@ class EvidenceScoringTests(unittest.TestCase):
         win=result(b,[event("battle_win")])
         self.assertEqual(evaluate("win_battle",b,win,identity())["result"],"PASS")
         self.assertEqual(evaluate("checkpoint_resume",b,win,identity())["result"],"FAIL")
-        accepted=result(b,[event("checkpoint_reload",10,**{"ordinal":1}),event("native_step",12,B,C)])
+        accepted=result(b,[event("checkpoint_reload",10,A,A,**{"ordinal":1}),event("native_step",12,B,C)])
         self.assertEqual(evaluate("checkpoint_resume",b,accepted,identity())["result"],"PASS")
         self.assertEqual(evaluate("navigation_progress",b,accepted,identity())["result"],"FAIL")
 
     def test_repeated_reload_requires_fresh_ordinal_for_same_decision(self):
         b=baseline()
         current=identity()
-        old=event("checkpoint_reload",10,**{"ordinal":2})
+        old=event("checkpoint_reload",10,A,A,**{"ordinal":2})
         b["native_acceptance"]={"identity":{"rom":current["rom"],
               "runner":current["runner"],"engine":engine_hash()},
               "profile_admitted":True,"events":[old]}
         stale=result(b,[old],ident=current)
         self.assertEqual(evaluate("checkpoint_resume",b,stale,current)["result"],"FAIL")
-        fresh=result(b,[old,event("checkpoint_reload",10,**{"ordinal":3}),
+        fresh=result(b,[old,event("checkpoint_reload",10,A,A,**{"ordinal":3}),
                         event("native_step",12,B,C)],ident=current)
         self.assertEqual(evaluate("checkpoint_resume",b,fresh,current)["result"],"PASS")
         # A new engine has reset its ledger; an ordinal of 1 is new even
         # when the source had higher ordinals from the previous engine.
         older=copy.deepcopy(b)
         older["native_acceptance"]["identity"]["engine"]=D
-        upgraded=result(older,[event("checkpoint_reload",10,**{"ordinal":1}),
+        upgraded=result(older,[event("checkpoint_reload",10,A,A,**{"ordinal":1}),
                                event("native_step",12,B,C)],ident=current)
         self.assertEqual(evaluate("checkpoint_resume",older,upgraded,current)["result"],"PASS")
         malformed=result(b,[event("checkpoint_reload",10),event("native_step",12,B,C)],ident=current)
