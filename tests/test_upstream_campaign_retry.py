@@ -72,6 +72,26 @@ class CampaignSkillTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.run_model([json.dumps({"name":"advance_dialog","args":{}})]*2,history)
 
+    def test_legacy_stopped_record_without_after_still_quarantined(self):
+        screen=digest(bytes(240*160*3))
+        history=[{"result":"SKILL_STOPPED: blocked","before":screen,
+                  "skill":"advance_dialog","args":{}}]
+        result,opener=self.run_model([
+            json.dumps({"name":"advance_dialog","args":{}}),
+            json.dumps({"name":"team_report","args":{}})],history)
+        self.assertEqual(result,("team_report",{}))
+        self.assertEqual(len(opener.requests),2)
+
+    def test_unwitnessed_success_breaks_quarantine_epoch(self):
+        screen=digest(bytes(240*160*3))
+        history=[
+            {"result":"SKILL_STOPPED: blocked","before":screen,"after":screen,
+             "skill":"advance_dialog","args":{}},
+            {"result":"ok","before":screen,"skill":"read_game_state","args":{}},
+        ]
+        result,_=self.run_model([json.dumps({"name":"advance_dialog","args":{}})],history)
+        self.assertEqual(result,("advance_dialog",{}))
+
     def test_two_unchanged_successes_require_new_skill(self):
         rgb=bytes(240*160*3)
         history=[{"result":"read only","before":digest(rgb),"after":digest(rgb),
