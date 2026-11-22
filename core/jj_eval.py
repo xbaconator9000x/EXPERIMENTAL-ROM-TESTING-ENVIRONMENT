@@ -243,9 +243,11 @@ def run_isolated(scenario,checkpoint,output_root,runner,rom,rom_sha,goal,model,
         raise ValueError("Unsupported scenario or decision budget")
     if not isinstance(rom_sha,str) or not SHA.fullmatch(rom_sha):
         raise ValueError("Invalid local ROM SHA-256")
-    cp=Path(checkpoint).resolve(strict=True)
+    input_path=Path(checkpoint)
+    if input_path.is_symlink():raise ValueError("Symlink checkpoint is not allowed")
+    cp=input_path.resolve(strict=True)
     out=Path(output_root).resolve()
-    if not cp.is_file() or cp.is_symlink() or _overlaps(cp.parent,out):
+    if not cp.is_file() or _overlaps(cp.parent,out):
         raise ValueError("Evaluation directory must be separate from the real checkpoint")
     if not Path(runner).is_file() or not Path(rom).is_file():
         raise ValueError("Runner and ROM must exist locally")
@@ -254,6 +256,7 @@ def run_isolated(scenario,checkpoint,output_root,runner,rom,rom_sha,goal,model,
     if not isinstance(model_id,str) or not model_id:
         raise ValueError("Model identity required")
     identity={"rom":rom_sha,"runner":_digest_file(runner),"goal":goal,"model":model_id}
+    original_hash=_digest_file(cp)
     prior=load_progress(cp,identity)
     if prior is None:raise ValueError("Checkpoint missing")
     baseline,state,rgb=prior
@@ -276,7 +279,7 @@ def run_isolated(scenario,checkpoint,output_root,runner,rom,rom_sha,goal,model,
     result=evaluate(scenario,baseline,final,identity,status=status,
                     audit=scratch/"actions.jsonl")
     result["scratch_directory"]=str(scratch)
-    result["original_unchanged"]=_digest_file(cp)==_digest_file(checkpoint)
+    result["original_unchanged"]=_digest_file(cp)==original_hash
     if not result["original_unchanged"]:
         result["result"]="FAIL";result["reason"]="original_checkpoint_modified"
     path=scratch/"evaluation.json"
