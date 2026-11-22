@@ -158,12 +158,24 @@ def summary(meta):
 
 
 def complete(meta,*,task_name,observed):
-    """No optimistic quest completion; only actual native evidence."""
-    if task_name not in TASKS or not observed:return False
+    """Only completed, independently recorded map transitions count.
+
+    NPC dialogue and event attempts are *not* successful quest completions.
+    The current native controller supplies observed_field_transitions only
+    after corroborated arrival, never after merely attempting a warp.
+    """
+    if task_name not in ("exit","explore") or not observed:return False
+    transitions=meta.get("observed_field_transitions",[])
+    if not isinstance(transitions,list) or not transitions:return False
+    last=transitions[-1]
+    if not isinstance(last,dict):return False
+    before,after=map_key(last.get("from")),map_key(last.get("to"))
+    if before is None or after is None or before==after:return False
     d=_world(meta)
     outcomes=d.setdefault("skill_outcomes",[])
     if not isinstance(outcomes,list):outcomes=[]
-    row={"task":task_name,"result":"native_verified"}
+    row={"task":task_name,"result":"native_verified","from":before,"to":after}
+    if row in outcomes:return False
     outcomes.append(row)
     d["skill_outcomes"]=outcomes[-MAX_EVENTS:]
     return True
