@@ -149,6 +149,7 @@ def diagnostic(adapter,battles,menus,field,meta):
     return {"version":VERSION,"field_rom":adapter.admitted,"field_candidate":bool(field),
             "field_verified":adapter.verified_field(field,meta),
             "field_reason":getattr(adapter,"reason","unknown"),
+            "field_lock_probe":getattr(adapter,"lock_probe",None),
             "movement_witnesses":len(meta.get("field_proof",{}).get("directions",[])),
             "battle_callbacks":len(battles.callbacks),"battle_witnesses":len(meta.get("battle_proof",[])),
             "catalog":battles.catalog is not None,"inventory":battles.field_inventory,
