@@ -294,6 +294,12 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             adapter.attach(live)
             field_before=adapter.candidate(rgb)
             battle_before=battles.snapshot(live)
+            if battle_before and meta.get("event_goal"):
+                # A battle invalidates the previously calculated path.
+                # Keep the NPC/exit eligible and re-plan from the next
+                # verified field location after the interruption.
+                explorer.interrupt(meta,"battle")
+                meta.pop("native_route",None)
             events=explorer.inspect(field_before,meta)
             # Only actual native movement proof can update the world graph.
             field_verified=adapter.verified_field(field_before,meta)
@@ -630,12 +636,14 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 world_observe(meta,field_after,None,verified=True,
                               decision=meta["decisions"]+1)
                 world_complete(meta,task_name="exit",observed=True)
-            if source=="native_explore":explorer.finish(meta,field_before,field_after,event_command)
+            after_battle=battles.snapshot(live)
+            if source=="native_explore":
+                explorer.finish(meta,field_before,field_after,event_command,
+                                interrupted=(after_battle is not None))
             observe_arrival(meta,field_after,adapter.verified_field(field_after,meta))
             if source=="native_route":
                 if not field_after or not field_before or field_after[0].map_id!=field_before[0].map_id or field_after[0].pos!=route_expected:meta.pop("native_route",None)
                 elif meta.get("native_route"):meta["native_route"]["remaining"]-=1
-            after_battle=battles.snapshot(live)
             witness_after=acceptance.witness(live,field_after,after_battle)
             record_navigation(meta,screen,digest(after),actions,
                 safe_field=(nav_allowed and after_battle is None
