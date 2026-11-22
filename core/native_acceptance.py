@@ -133,5 +133,15 @@ class Acceptance:
 
     def reload(self,decision,expected_rgb,actual_rgb):
         if self.enabled and expected_rgb==actual_rgb:
+            # A fresh cold restart can occur at the SAME decision/screen as
+            # an earlier one. Tag each genuine native framebuffer match with
+            # a monotonic ordinal, so reproducible isolated episodes can
+            # distinguish new reload proof from old checkpoint history.
+            previous=self.ledger.get("reload_observations",0)
+            if type(previous) is not int or not 0<=previous<10000000:
+                previous=0
+            ordinal=previous+1
+            self.ledger["reload_observations"]=ordinal
             h=hashlib.sha256(actual_rgb).hexdigest()
-            self.record("checkpoint_reload",decision,h,h,"native_restart")
+            self.record("checkpoint_reload",decision,h,h,"native_restart",
+                        {"ordinal":ordinal})
