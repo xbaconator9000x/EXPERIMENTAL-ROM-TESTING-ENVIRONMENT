@@ -44,6 +44,17 @@ class Tests(unittest.TestCase):
         m={"history":history()}
         self.assertEqual(len({bootstrap(m,(f,123,set()),"a")["actions"][0]["button"] for _ in range(4)}),4)
         self.assertIsNone(bootstrap(m,(f,123,set()),"a"))
+    def test_stale_title_label_cannot_mask_verified_native_field(self):
+        from core.jj_unattended import bootstrap
+        from core.firered import Field
+        f=Field((1,2),(2,2),5,5,(0,)*25)
+        rows=[{"scene":"title_screen","actions":[{"button":"START","frames":16}],
+               "before":"a","after":"a"} for _ in range(3)]
+        self.assertIsNotNone(bootstrap({"history":rows},(f,123,set()),"a"))
+        rows[-1]["scene"]="battle_command"
+        self.assertIsNone(bootstrap({"history":rows},(f,123,set()),"a"))
+        self.assertIsNone(bootstrap({"history":rows},None,"a"))
+
     def test_replay_success_returns_state_and_rgb(self):
         class Live:
             def step(self,*a):pass
