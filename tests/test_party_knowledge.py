@@ -4,7 +4,7 @@ import unittest
 
 from core.party_knowledge import (
     observe_party, observe_battle, knowledge_context, capture_preference,
-    battle_advice, valid_party,
+    battle_advice, valid_party, party_coverage,
 )
 
 
@@ -110,6 +110,21 @@ class PartyKnowledgeTests(unittest.TestCase):
         meta["battle_proof"]=[]
         self.assertFalse(observe_battle(meta,new,Catalog,decision=5))
         self.assertEqual(meta["battle_knowledge"]["decision"],4)
+
+    def test_party_type_coverage_uses_only_known_ready_moves(self):
+        meta={}
+        observe_party(meta,[mon(),mon(1,25)],Catalog,decision=4)
+        report=party_coverage(meta)
+        self.assertTrue(report["coverage_verified"])
+        self.assertEqual(report["party_types"],["electric","water"])
+        self.assertIn("water",report["currently_usable_damaging_types"])
+        pressures={r["attack_type"]:r for r in report["defensive_pressures"]}
+        self.assertEqual(pressures["ground"]["weak_members"],1)
+        self.assertEqual(pressures["electric"]["resisting_members"],1)
+        # A full team snapshot with an unknown modified species does not
+        # invent weaknesses or claim dependable coverage.
+        observe_party(meta,[mon(0,400)],Catalog,decision=5)
+        self.assertFalse(party_coverage(meta)["coverage_verified"])
 
     def test_capture_roster_diversity_and_resource_reserve(self):
         enemy={"species":43}
