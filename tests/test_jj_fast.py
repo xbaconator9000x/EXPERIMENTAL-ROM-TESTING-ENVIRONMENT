@@ -67,6 +67,23 @@ class FastTests(unittest.TestCase):
         rect(7,153,225,6,(4,8,12))
         self.assertIsNone(ordinary_dialogue(bytes(raw)))
 
+    def test_real_style_starter_warning_box_with_dark_lower_border(self):
+        # The private v1.03.3 playthrough showed a full-width ordinary
+        # message ("Oh no! I forgot my Pokémon") while script controls
+        # were locked. The previous lower-border detector demanded gray/
+        # navy and silently returned to vision-driven directional movement.
+        rgb=bytearray(frame())
+        for y in range(113,119):
+            rgb[(y*240+1)*3:(y*240+239)*3]=bytes((158,70,36))*238
+        for y in range(153,159):
+            rgb[(y*240+1)*3:(y*240+239)*3]=bytes((16,16,21))*238
+        shown=bytes(rgb)
+        self.assertIsNotNone(ordinary_dialogue(shown))
+        self.assertEqual(quick_dialogue(shown,{"history":[]})[0]["actions"],
+                         [{"button":"A","frames":5}])
+        # A real secondary choice panel must still inhibit blind A.
+        self.assertIsNone(ordinary_dialogue(frame(choice=True)))
+
     def test_native_lock_flags_diagnose_only_and_do_not_bypass(self):
         class FakeLive:
             def __init__(self,script,fade):self.script,self.fade=script,fade
@@ -77,8 +94,8 @@ class FastTests(unittest.TestCase):
         for script,fade in ((1,0),(0,1),(1,1)):
             a.attach(FakeLive(script,fade))
             self.assertIsNone(a.candidate(bytes(115200)))
-            self.assertEqual(a.reason,"SCRIPT_OR_FADE_LOCK")
-            self.assertEqual(a.lock_probe,{"script_active":bool(script),"fade_active":bool(fade)})
+            self.assertEqual(a.reason,"SCRIPT_CONTROL_LOCK")
+            self.assertEqual(a.lock_probe,{"script_active":bool(script),"script_context2_active":bool(fade)})
 
     def test_native_party_checksum(self):
         p=party();m=decode_party(p)[0];self.assertEqual((m["species_id"],m["hp"],m["moves"][0]),(19,18,33))
