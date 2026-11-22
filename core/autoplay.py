@@ -32,7 +32,7 @@ from core.jj_tile_memory import refresh_on_verified_arrival
 from core.jj_menus import MenuDriver,intent_from_battle
 from core.jj_runtime import NATIVE, animation_wait, record_field, count_decision, recovery_allowed
 from core.jj_connections import observe_arrival
-from core.jj_unattended import recovery, oscillation, field_hint, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id, bootstrap
+from core.jj_unattended import recovery, oscillation, field_hint, quarantined, quarantine, alternative, quest_state, replay, diagnostic, action_id, bootstrap, vision_stall
 
 BUTTONS={"A":1,"B":2,"SELECT":4,"START":8,"RIGHT":16,"LEFT":32,"UP":64,"DOWN":128,"R":256,"L":512,"WAIT":0}
 SCHEMA={"type":"object","additionalProperties":False,"required":["scene","objective","actions","review"],"properties":{
@@ -447,6 +447,26 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 source="transition_wait"
             try:
                 if decision is None:
+                    # A native event reader is the primary controller. If the
+                    # model repeatedly wanders in the same starter map, park
+                    # with the exact checkpoint instead of another expensive
+                    # Qwen inference and a repeated reverse movement.
+                    if (sha in JJ_RELEASES and field_verified and
+                            vision_stall(meta,field_before)):
+                        meta["review"]={
+                            "scene":"native_starter_navigation",
+                            "objective":meta.get("objective_state",{}).get("task","Obtain the first Pokémon"),
+                            "reason":"vision stalled on starter map; native interaction/event target requires review",
+                            "event_probe":meta.get("native_event_probe")}
+                        save_progress(path,identity,meta,live.save_state(),rgb)
+                        report("NEEDS_REVIEW",meta,rgb)
+                        if control:
+                            control.review=True
+                            live,meta,rgb,_=control.serve(live,meta,rgb,should_stop)
+                            if should_stop():return "STOPPED",meta,rgb
+                            acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
+                            continue
+                        return "NEEDS_REVIEW",meta,rgb
                     mstart=time.perf_counter()
                     if isinstance(model,OllamaVision) and model.structured and "map" in model.structured:
                         model.structured.update(explorer.describe(field_before,meta,events))
