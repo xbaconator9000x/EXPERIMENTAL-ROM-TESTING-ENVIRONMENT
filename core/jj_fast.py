@@ -84,8 +84,15 @@ def ordinary_dialogue(rgb):
     # The real v1.03.3 "Oh no! I forgot my Pokémon" reminder has a
     # near-black lower border. Earlier checks only admitted gray/navy
     # borders, misclassifying this actual scripted message as field.
-    if not any(sum(gray(p) or navy(p) or ink(p) for p in colors(i))>=175
-               for i in range(152,160)):return None
+    def lower_edge(i):
+        row=colors(i)
+        outside=row[0]
+        # Dark pixels count only if they form an actual window edge,
+        # not the identical dark overworld/background behind a vanished box.
+        return sum(gray(p) or navy(p) or
+                   (ink(p) and sum(abs(a-b) for a,b in zip(p,outside))>=18)
+                   for p in row[x0+3:x1-3])
+    if not any(lower_edge(i)>=175 for i in range(152,160)):return None
     # Refuse an empty/opening dialogue box: A might become an interaction or a
     # menu confirmation after a text animation has cleared.
     glyphs=sum(sum(white(p) if navy_box else ink(p) for p in colors(i)[15:225])
