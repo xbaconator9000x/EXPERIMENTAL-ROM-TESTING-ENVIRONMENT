@@ -26,7 +26,9 @@ position, callback and planned destination. When one very short directional
 tap leaves the avatar on the same tile, it records **one provisional probe**,
 not an impassable tile. The next attempt of that same step can use a bounded
 12-frame hold; only two independently verified unchanged attempts temporarily
-block the tile for A*. Arrival unblocks it again.
+block the tile for A*. Arrival unblocks it again. A separately verified map
+reentry also expires provisional obstacle assumptions because NPCs and script
+flags may have changed since the previous visit.
 
 The memory is bounded to 48 maps / 96 recent tile probes per map, stored
 inside the same local identity-locked checkpoint. It refuses to learn from
