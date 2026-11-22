@@ -123,7 +123,17 @@ class Explorer:
         all_events=events
         if task=="interact":events=[e for e in events if e["kind"] in ("npc","bg")]
         elif task=="exit":events=[e for e in events if e["kind"] in ("warp","connection")]
-        choices=options(f,occupied,events,meta.get("event_attempts",[]),blocked_tiles(meta,f.map_id),avoid_warps=all_events)
+        attempted=meta.get("event_attempts",[])
+        choices=options(f,occupied,events,attempted,blocked_tiles(meta,f.map_id),avoid_warps=all_events)
+        if (not choices and task=="interact"
+                and meta.get("objective_state",{}).get("phase")=="obtain_initial_party"
+                and meta.get("starter_event_retry")!=list(f.map_id)):
+            # An old checkpoint may have marked every NPC/background event
+            # attempted after a single A press without confirming a starter.
+            # Retry each native event once, bounded to one sweep per map, and
+            # leave the original attempt history intact.
+            meta["starter_event_retry"]=list(f.map_id)
+            choices=options(f,occupied,events,[],blocked_tiles(meta,f.map_id),avoid_warps=all_events)
         if not choices:return False
         choices=[c for c in choices if c[5] or c[4]["kind"]!="warp"]
         if not choices:return False
@@ -148,7 +158,7 @@ class Explorer:
             if event["kind"]=="warp":return None
             if event["kind"]=="connection":
                 action=event["direction"];expected=None;kind="cross"
-            elif facing!=goal["facing"]:
+            elif facing!=goal["facing"] and not (facing is None and goal.get("face_confirmed")):
                 action=goal["facing"];expected=f.pos;kind="face"
             else:action="A";expected=None;kind="interact"
         else:
@@ -201,6 +211,13 @@ class Explorer:
             edge={"from":list(f.map_id),"to":list(after[0].map_id),"event":goal["event"]["id"]}
             if edge not in edges:edges.append(edge)
             meta["map_transitions"]=edges[-100:]
+        if (kind=="face" and after and tuple(after[0].map_id)==tuple(f.map_id)
+                and tuple(after[0].pos)==tuple(f.pos)
+                and self.adapter.verified_field(after,meta)):
+            # Some hacks expose a valid player position but no reliable
+            # facing byte. One completed directional tap is sufficient to
+            # proceed to A rather than turning forever.
+            goal["face_confirmed"]=True
         if kind=="cross":
             meta["pending_crossing"]={"from":list(f.map_id),"destination":goal["event"]["destination"],"event":goal["event"]["id"]}
         if kind in ("interact","cross") or not after or after[0].map_id!=f.map_id or (expected is not None and after[0].pos!=expected):
