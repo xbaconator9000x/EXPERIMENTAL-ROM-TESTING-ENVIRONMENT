@@ -62,14 +62,17 @@ def observe(meta,candidate,events,*,verified,decision):
     node.update(visits=min(100000,int(node.get("visits",0))+1),
                 positions=positions[-MAX_POSITIONS:],
                 last_decision=decision)
-    counts=Counter()
-    if events and type(events) in (list,tuple) and len(events)<256:
-        for event in events:
-            if not isinstance(event,dict) or event.get("kind") not in ("npc","warp","connection"):continue
-            if type(event.get("x")) is not int or type(event.get("y")) is not int:continue
-            if not 0<=event["x"]<field.width or not 0<=event["y"]<field.height:continue
-            counts[event["kind"]]+=1
-    node["event_kinds"]=dict(counts)
+    # The post-input witness may have no fresh event read. Preserve the
+    # most recent verified event inventory rather than erasing it to {}.
+    if events is not None:
+        counts=Counter()
+        if type(events) in (list,tuple) and len(events)<256:
+            for event in events:
+                if not isinstance(event,dict) or event.get("kind") not in ("npc","warp","connection"):continue
+                if type(event.get("x")) is not int or type(event.get("y")) is not int:continue
+                if not 0<=event["x"]<field.width or not 0<=event["y"]<field.height:continue
+                counts[event["kind"]]+=1
+        node["event_kinds"]=dict(counts)
     maps[k]=node
     while len(maps)>MAX_MAPS:maps.pop(next(iter(maps)))
     recent=d["recent"]
