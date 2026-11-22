@@ -116,9 +116,28 @@ class Explorer:
             action=path[0].upper();dx,dy=DIR[action];expected=(f.pos[0]+dx,f.pos[1]+dy);kind="move"
         frames=(probe_frames(meta,f.map_id,expected) if kind=="move" else (1 if action!="A" else 5))
         return {"scene":"native_exploration","objective":("Interact with observed NPC" if event["kind"]=="npc" else "Travel toward observed connection" if event["kind"]=="connection" else "Approach observed warp"),"actions":[{"button":action,"frames":frames}],"review":False},(kind,expected)
-    def finish(self,meta,before,after,command):
+    def interrupt(self,meta,reason):
+        """Discard a stale skill path without treating its objective as failed.
+
+        A native battle, scripted transition or temporary menu interrupts the
+        route; the agent must re-plan from the next corroborated field state.
+        The event stays eligible for another attempt.
+        """
+        if reason not in ("battle","menu","transition"):return False
+        goal=meta.pop("event_goal",None)
+        if not isinstance(goal,dict):return False
+        row={"map":goal.get("map"),"event":goal.get("key"),"reason":reason}
+        history=meta.get("skill_interruptions",[])
+        if not isinstance(history,list):history=[]
+        history.append(row)
+        meta["skill_interruptions"]=history[-24:]
+        return True
+    def finish(self,meta,before,after,command,*,interrupted=False):
         goal=meta.get("event_goal")
         if not goal:return
+        if interrupted:
+            self.interrupt(meta,"battle")
+            return
         f=before[0];kind,expected=command
         if kind=="move" and expected is not None:
             outcome=record_tile_step(meta,before,after,command,
