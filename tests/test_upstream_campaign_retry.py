@@ -96,6 +96,29 @@ class CampaignSkillTests(unittest.TestCase):
         result,_=self.run_model([json.dumps({"name":"advance_dialog","args":{}})],history)
         self.assertEqual(result,("advance_dialog",{}))
 
+    def test_return_to_previous_screen_starts_new_epoch(self):
+        rgb=bytes(240*160*3)
+        screen=digest(rgb)
+        history=[
+            {"result":"ok","before":screen,"after":screen,"skill":"team_report","args":{}},
+            {"result":"ok","before":screen,"after":screen,"skill":"team_report","args":{}},
+            {"result":"ok","before":screen,"after":"other scene","skill":"advance_dialog","args":{}},
+            {"result":"ok","before":"other scene","after":screen,"skill":"advance_dialog","args":{}},
+        ]
+        result,_=self.run_model([json.dumps({"name":"team_report","args":{}})],history)
+        self.assertEqual(result,("team_report",{}))
+
+    def test_interleaved_no_progress_in_same_epoch_is_still_blocked(self):
+        rgb=bytes(240*160*3)
+        screen=digest(rgb)
+        history=[
+            {"result":"ok","before":screen,"after":screen,"skill":"team_report","args":{}},
+            {"result":"ok","before":screen,"after":screen,"skill":"read_game_state","args":{}},
+            {"result":"ok","before":screen,"after":screen,"skill":"team_report","args":{}},
+        ]
+        with self.assertRaises(ValueError):
+            self.run_model([json.dumps({"name":"team_report","args":{}})]*2,history)
+
     def test_changed_screen_allows_retry(self):
         previous={"result":"SKILL_STOPPED: blocked","before":"other screen",
                   "skill":"advance_dialog","args":{}}
