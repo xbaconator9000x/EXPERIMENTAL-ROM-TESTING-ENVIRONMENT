@@ -95,6 +95,8 @@ class OperatorControl:
 
     def apply(self,comment_id,cmd,live,meta,rgb):
         op=cmd["action"]
+        previous_screen=rgb
+        prior_review=meta.get("review",{})
         if cmd.get("expected_screen") and digest(rgb)!=cmd["expected_screen"]:
             raise ValueError("Stale screen witness")
         state=None
@@ -131,6 +133,20 @@ class OperatorControl:
                 if item["button"]!="WAIT":live.step(0,3)
             rgb=live.rgb()
             meta["frames"]+=sum(item["frames"]+(3 if item["button"]!="WAIT" else 0) for item in cmd["args"]["actions"])
+            # A trusted operator can get the sprite to a doorway even while
+            # the old native event frontier is marked exhausted. Revalidate
+            # the field after the input, then retire old exhaustion budgets
+            # only if script control genuinely releases. An identical LCD
+            # or a confirmation-only A/B press is not a movement witness.
+            directional=any(item["button"] in ("UP","DOWN","LEFT","RIGHT")
+                            for item in cmd["args"]["actions"])
+            if (directional and rgb!=previous_screen and
+                    isinstance(prior_review,dict) and
+                    prior_review.get("scene") in (
+                        "native_navigation_exhausted","unclassified_game_state",
+                        "native_script_locked","native_script_settle")):
+                meta["recovery_resume"]={"kind":"native_script_locked",
+                    "phase":"pending","source":"operator_directional_override"}
             self.review=False
         elif op=="soft_reset":
             live.step(1|2|4|8,8)
