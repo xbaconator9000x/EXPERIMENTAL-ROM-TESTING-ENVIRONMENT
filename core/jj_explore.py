@@ -130,6 +130,12 @@ class Explorer:
                 # then avoid that tile if movement is still unobserved.
                 goal["remaining"]-=1
                 return
+            if outcome=="blocked":
+                # The approach tile, not the entire NPC/exit, is unusable.
+                # Re-evaluate other A* approaches before marking the story
+                # event itself as attempted.
+                meta.pop("event_goal",None)
+                return
         if after and after[0].map_id!=f.map_id:
             edges=meta.get("map_transitions",[])
             edge={"from":list(f.map_id),"to":list(after[0].map_id),"event":goal["event"]["id"]}
