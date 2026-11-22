@@ -56,7 +56,7 @@ jobs:
         run: |
           mkdir -p build
           gcc -std=gnu11 -O2 -Wall -Wextra core/live_runner.c -o build/live_runner.exe -lmgba
-          printf 'MSYS2_UCRT64_BIN=%s\\n' "$(cygpath -w /ucrt64/bin)" >> "$GITHUB_ENV"
+          echo "MSYS2_UCRT64_BIN=$(cygpath -w /ucrt64/bin)" >> "$GITHUB_ENV"
       - name: Windows-native operator save, load, reset and input smoke test
         shell: pwsh
         run: |
