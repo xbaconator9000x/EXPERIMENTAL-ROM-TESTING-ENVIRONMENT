@@ -135,6 +135,24 @@ class Tests(unittest.TestCase):
         self.assertEqual(q["task"],"Find the next verified story interaction or map exit.")
         self.assertEqual(q["task_source"],"campaign_priority_after_party")
 
+    def test_party_acquisition_reopens_native_story_events_once(self):
+        from core.jj_unattended import quest_state
+        party=[{"hp":20,"max_hp":20}]
+        meta={"event_attempts":["43:1:warp:0:4:2","43:1:npc:1:3:7"],
+              "event_goal":{"map":[43,1]},"starter_event_retry":[43,1]}
+        quest_state(meta,None,party)
+        self.assertEqual(meta["event_attempts"],[])
+        self.assertEqual(meta["event_attempt_party_count"],1)
+        self.assertEqual(meta["prior_event_attempts"][0]["attempts"],
+                         ["43:1:warp:0:4:2","43:1:npc:1:3:7"])
+        self.assertNotIn("event_goal",meta)
+        meta["event_attempts"]=["43:1:warp:0:4:2"]
+        quest_state(meta,None,party)
+        self.assertEqual(meta["event_attempts"],["43:1:warp:0:4:2"])
+        quest_state(meta,None,party+[{"hp":10,"max_hp":20}])
+        self.assertEqual(meta["event_attempts"],[])
+        self.assertEqual(meta["event_attempt_party_count"],2)
+
     def test_starter_goal_overrides_repeated_field_recovery_and_yields_after_party(self):
         meta={}
         for _ in range(4):

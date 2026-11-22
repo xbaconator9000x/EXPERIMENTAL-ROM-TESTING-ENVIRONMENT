@@ -206,6 +206,8 @@ class Explorer:
         key=":".join(map(str,f.map_id))
         book=meta.setdefault("native_scout",{"maps":{}})
         maps=book.setdefault("maps",{})
+        if key not in maps and len(maps)>=24:
+            maps.pop(next(iter(maps)))
         node=maps.setdefault(key,{"visited":[],"moves":0})
         if not isinstance(node,dict):return None
         visited=node.setdefault("visited",[])

@@ -196,6 +196,21 @@ def quest_state(meta,field,party,obs=None,objective=None):
     can mark acquisition/transition milestones. Model facts stay hypotheses."""
     q=meta.setdefault("objective_state",{"phase":"obtain_initial_party","milestones":[],"task":"","fact":""})
     if isinstance(party,list) and party:
+        # Previously attempted warps/NPCs can become available when the team
+        # changes. Keep a bounded audit of attempts, then give the native
+        # explorer a fresh attempt epoch. Also migrates old pre-party saves.
+        previous_count=meta.get("event_attempt_party_count")
+        if previous_count!=len(party):
+            old=meta.get("event_attempts",[])
+            if isinstance(old,list) and old:
+                archive=meta.setdefault("prior_event_attempts",[])
+                archive.append({"party_count":previous_count,
+                                "attempts":old[-128:]})
+                meta["prior_event_attempts"]=archive[-4:]
+            meta["event_attempts"]=[]
+            meta["event_attempt_party_count"]=len(party)
+            meta.pop("starter_event_retry",None)
+            meta.pop("event_goal",None)
         if "party_observed" not in q["milestones"]:q["milestones"].append("party_observed")
         healthy=[p for p in party if p["hp"]>0]
         if not healthy or max(p["hp"]/p["max_hp"] for p in healthy)<.25:q["phase"]="restore_party_health"
