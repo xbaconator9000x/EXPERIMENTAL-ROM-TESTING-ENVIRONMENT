@@ -527,7 +527,10 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     scout=explorer.scout(field_before,meta,events)
                     if scout:decision,scout_command=scout;source="native_scout"
             if (decision is None and sha in JJ_RELEASES and
-                    adapter.reason=="SCRIPT_CONTROL_LOCK" and
+                    (adapter.reason=="SCRIPT_CONTROL_LOCK" or
+                     (adapter.reason=="DIALOGUE_ACTIVE" and
+                      meta.get("native_text_probe",{}).get("status")==
+                      "REPEATED_VISUAL_PAGE_GUARDED")) and
                     battle_before is None and menu_before is None):
                 # Screenshot-proven story reminders lock the field. Ordinary
                 # dialogue is advanced above; otherwise WAIT only. Never let
@@ -855,6 +858,12 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                         continue
                     return "EMULATOR_ERROR",meta,rgb
             input_finished=time.perf_counter()
+            if (source in ("native_text","fast_dialogue")
+                    and any(a["button"]=="A" for a in actions)
+                    and digest(after)!=screen):
+                # A verified dialogue-page transition is real progress. Old
+                # script-wait budgets must not accumulate across conversations.
+                meta.pop("script_settle",None)
             if source=="native_battle":
                 intent=intent_from_battle(battle_before,decision,catalog)
                 if intent:meta["menu_intent"]=intent
