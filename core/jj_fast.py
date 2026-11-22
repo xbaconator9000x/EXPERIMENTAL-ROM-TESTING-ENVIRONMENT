@@ -123,7 +123,7 @@ def decode_party(raw):
 
 class Adapter:
     def __init__(self,rom,sha):
-        self.size=0;self.admitted=False;self.reason="ROM_NOT_ADMITTED";self.sha=sha
+        self.size=0;self.admitted=False;self.reason="ROM_NOT_ADMITTED";self.sha=sha;self.lock_probe=None
         if sha not in ADMITTED_SHA256S:return
         data=Path(rom).read_bytes();self.size=len(data)
         if hashlib.sha256(data).hexdigest()!=sha or data[0xac:0xb0]!=b"BPRE" or data[0xbc]!=0:return
@@ -138,13 +138,20 @@ class Adapter:
     def attach(self,live):
         self.live=live
     def candidate(self,rgb):
+        self.lock_probe=None
         if not self.admitted:return None
         if ordinary_dialogue(rgb):self.reason="DIALOGUE_ACTIVE";return None
         l=self.live
         try:
             cb=l.integer(MAIN+4,4)
             if not cb&1 or not span(cb&~1,2,0x08000000,0x08000000+self.size):self.reason="CALLBACK_INVALID";return None
-            if l.integer(SCRIPT,1)!=0 or l.integer(FADE,1)!=0:self.reason="SCRIPT_OR_FADE_LOCK";return None
+            script_active=l.integer(SCRIPT,1)!=0
+            fade_active=l.integer(FADE,1)!=0
+            # Expose only boolean lock classification to private telemetry.
+            # Never lift a script/fade lock based on guessed offsets or stale
+            # model labels: the read-only probe distinguishes the blocker.
+            self.lock_probe={"script_active":script_active,"fade_active":fade_active}
+            if script_active or fade_active:self.reason="SCRIPT_OR_FADE_LOCK";return None
             p=Profile(self.sha,SAVE_PTR,MAP_HEADER,VMAP,MAIN+4,cb,((SCRIPT,1,255,0),(FADE,1,255,0)))
             field=Reader(l,p).snapshot()
             objects=l.read(OBJECTS,36*16)
