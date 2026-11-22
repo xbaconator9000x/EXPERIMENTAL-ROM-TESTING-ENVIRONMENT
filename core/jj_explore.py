@@ -3,6 +3,7 @@ from core.jj_fast import OBJECTS, MAP_HEADER, DIR, u, signed
 from core.firered import span
 from core.live import LiveError
 from core.jj_connections import crossings
+from core.jj_world_model import rank as rank_goal
 from vendor.pokemon_agent.pathfinding import find_path
 
 FACING={1:"DOWN",2:"UP",3:"LEFT",4:"RIGHT"}
@@ -83,15 +84,13 @@ class Explorer:
         if not choices:return False
         choices=[c for c in choices if c[5] or c[4]["kind"]!="warp"]
         if not choices:return False
+        # Select intent, then let the existing tested A* paths and per-step
+        # witness checks do the movement. Avoid repeating visited routes while
+        # retaining the option to return through story-gated map connections.
         party=meta.get("native_party_count")
-        visited={tuple(m) for m in meta.get("visited_native_maps",[])}
-        def rank(c):
-            dist,_,_,_,event,_=c
-            priority=0 if party==0 and event["kind"]=="npc" else 1
-            if party and event["kind"] in ("warp","connection"):
-                priority=0 if tuple(event["destination"]) not in visited else 2
-            return priority,dist,c[1],c[2]
-        _,key,target,facing,event,path=min(choices,key=rank)
+        chosen=rank_goal(meta,choices,party,current_map=f.map_id,task_name=task)
+        if chosen is None:return False
+        _,key,target,facing,event,path=chosen
         meta["event_goal"]={"map":list(f.map_id),"key":key,"event":event,"target":list(target),"facing":facing,"remaining":min(48,len(path)+3)}
         return True
     def next(self,candidate,meta,info):
