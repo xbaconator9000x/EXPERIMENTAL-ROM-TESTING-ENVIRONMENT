@@ -145,7 +145,13 @@ def quest_state(meta,field,party,obs=None,objective=None):
     if obs and isinstance(obs.get("fact"),str) and obs["fact"]:
         q["fact"]=obs["fact"][:180]
         q["fact_source"]="model_hypothesis_not_a_verified_story_flag"
-    if isinstance(objective,str) and objective:
+    if q.get("phase")=="obtain_initial_party":
+        # A local recovery action must not replace the strategic objective.
+        # Keep the observed starting Poké Ball as the target until native
+        # party evidence confirms initial acquisition.
+        q["task"]="Find the Poké Ball in the starting bedroom, approach it, face it and press A; verify a Pokémon is acquired."
+        q["task_source"]="campaign_priority_pending_native_party_witness"
+    elif isinstance(objective,str) and objective:
         q["task"]=objective[:240]
         q["task_source"]="planner_proposal"
     q["milestones"]=q["milestones"][-24:]
