@@ -1,4 +1,4 @@
-"""Jessie & James v1.01 deterministic gameplay adapter.
+"""Jessie & James exact-release deterministic gameplay adapter.
 
 Exact-release gated. Candidate FRLG memory addresses are admitted only if
 present in the local cartridge, structurally valid at runtime, and corroborated
@@ -13,6 +13,8 @@ from core.live import LiveError
 from vendor.pokemon_agent.pathfinding import find_path
 
 SHA="06d9c87234400f45f1fc3a356881f0ad8bd9b977bc5cbed450e5c7eedd01b632"
+SHA_V1033="bb4fd81b32f5e2a69254fc18fbc47e7c7bcbfb35baeace45be2b5dda7876803b"
+ADMITTED_SHA256S=frozenset((SHA,SHA_V1033))
 SAVE_PTR=0x03005008
 MAP_HEADER=0x02036DFC
 VMAP=0x03005040
@@ -97,8 +99,8 @@ def decode_party(raw):
 
 class Adapter:
     def __init__(self,rom,sha):
-        self.size=0;self.admitted=False;self.reason="ROM_NOT_ADMITTED"
-        if sha!=SHA:return
+        self.size=0;self.admitted=False;self.reason="ROM_NOT_ADMITTED";self.sha=sha
+        if sha not in ADMITTED_SHA256S:return
         data=Path(rom).read_bytes();self.size=len(data)
         if hashlib.sha256(data).hexdigest()!=sha or data[0xac:0xb0]!=b"BPRE" or data[0xbc]!=0:return
         # Candidate address literals must exist aligned in the executable area.
@@ -119,7 +121,7 @@ class Adapter:
             cb=l.integer(MAIN+4,4)
             if not cb&1 or not span(cb&~1,2,0x08000000,0x08000000+self.size):self.reason="CALLBACK_INVALID";return None
             if l.integer(SCRIPT,1)!=0 or l.integer(FADE,1)!=0:self.reason="SCRIPT_OR_FADE_LOCK";return None
-            p=Profile(SHA,SAVE_PTR,MAP_HEADER,VMAP,MAIN+4,cb,((SCRIPT,1,255,0),(FADE,1,255,0)))
+            p=Profile(self.sha,SAVE_PTR,MAP_HEADER,VMAP,MAIN+4,cb,((SCRIPT,1,255,0),(FADE,1,255,0)))
             field=Reader(l,p).snapshot()
             objects=l.read(OBJECTS,36*16)
             players=[];occupied=set()
