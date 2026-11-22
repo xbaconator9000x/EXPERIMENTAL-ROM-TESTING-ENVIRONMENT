@@ -294,7 +294,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             turn_started=time.perf_counter();model_elapsed=None
             adapter.attach(live)
             field_before=adapter.candidate(rgb)
-            if adapter.reason!="SCRIPT_CONTROL_LOCK":meta.pop("script_settle",None)
+            if getattr(adapter,"reason",None)!="SCRIPT_CONTROL_LOCK":meta.pop("script_settle",None)
             battle_before=battles.snapshot(live)
             if battle_before and meta.get("event_goal"):
                 # A battle invalidates the previously calculated path.
