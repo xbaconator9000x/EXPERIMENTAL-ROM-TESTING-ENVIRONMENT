@@ -3,14 +3,17 @@ import unittest
 from core.jj_fast import ordinary_dialogue,quick_dialogue,decode_party,ORDERS,Adapter,SHA
 from core.firered import Field
 
-def frame(choice=False,center=False):
+def frame(choice=False,center=False,navy=False,blank=False):
     rgb=bytearray(bytes((4,8,12))*38400)
     def rect(x,y,w,h,c):
         for j in range(y,y+h):
             rgb[(j*240+x)*3:(j*240+x+w)*3]=bytes(c)*w
     x=17 if center else 1;w=206 if center else 238
-    rect(x,113,w,6,(214,74,57));rect(x,119,w,34,(255,255,255));rect(x,153,w,6,(82,90,90))
-    rect(24,125,15,4,(20,20,90))
+    rect(x,113,w,6,(214,74,57))
+    rect(x,119,w,34,(21,31,80) if navy else (255,255,255))
+    rect(x,153,w,6,(82,90,90))
+    if not blank:
+        rect(24,125,15,4,(255,255,255) if navy else (20,20,90))
     if choice:rect(163,40,58,4,(214,74,57));rect(163,44,58,24,(255,255,255))
     return bytes(rgb)
 def party():
@@ -30,7 +33,17 @@ class FastTests(unittest.TestCase):
         self.assertIsNone(ordinary_dialogue(frame(center=True)))
         self.assertIsNone(ordinary_dialogue(bytes(115200)))
         self.assertIsNotNone(quick_dialogue(frame(),{"history":[]}))
-        self.assertIsNone(quick_dialogue(frame(),{"history":[{"source":"fast_dialogue"}]*6}))
+        self.assertIsNotNone(ordinary_dialogue(frame(navy=True)))
+        self.assertIsNotNone(quick_dialogue(frame(navy=True),{"history":[]}))
+        self.assertIsNone(ordinary_dialogue(frame(navy=True,choice=True)))
+        self.assertIsNone(ordinary_dialogue(frame(navy=True,center=True)))
+        self.assertIsNone(ordinary_dialogue(frame(navy=True,blank=True)))
+        self.assertIsNone(ordinary_dialogue(frame(blank=True)))
+        self.assertIsNotNone(quick_dialogue(frame(),{"history":[{"source":"fast_dialogue"}]*9}))
+        self.assertIsNone(quick_dialogue(frame(),{"history":[{"source":"fast_dialogue"}]*10}))
+        h=[{"source":"fast_dialogue","dialogue_page":ordinary_dialogue(frame(navy=True)), "before":"same","after":"same"}]
+        self.assertIsNone(quick_dialogue(frame(navy=True),{"history":h}))
+        self.assertIsNotNone(quick_dialogue(frame(navy=True),{"history":[{"source":"vision_compact"}]}))
     def test_native_party_checksum(self):
         p=party();m=decode_party(p)[0];self.assertEqual((m["species_id"],m["hp"],m["moves"][0]),(19,18,33))
         p[32]^=4
