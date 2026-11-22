@@ -154,6 +154,31 @@ class Tests(unittest.TestCase):
         self.assertEqual(q["phase"],"explore_and_advance_story")
         quest_state(m,None,[{"hp":1,"max_hp":10}])
         self.assertEqual(q["phase"],"restore_party_health")
+    def test_native_skill_actions_do_not_replace_story_goal(self):
+        meta={}
+        q=quest_state(meta,None,None)
+        self.assertIn("Poké Ball",q["task"])
+        q=quest_state(meta,None,[{"hp":20,"max_hp":20}])
+        self.assertEqual(q["task"],"Find the next verified story interaction or map exit.")
+        self.assertEqual(q["task_source"],"campaign_priority_after_party")
+        for objective in ("Survey a new native-verified walkable tile",
+                          "Approach observed warp",
+                          "Walk onto observed trigger",
+                          "Re-enter previously attempted native trigger",
+                          "Native-validated last-resort visual step"):
+            q=quest_state(meta,None,None,objective=objective)
+            self.assertEqual(q["task"],"Find the next verified story interaction or map exit.")
+        # A genuine strategic proposal remains distinguishable and intact
+        # when followed by the native movement needed to execute it.
+        q=quest_state(meta,None,None,objective="Leave the bedroom and find the next story NPC")
+        self.assertEqual(q["task"],"Leave the bedroom and find the next story NPC")
+        q=quest_state(meta,None,None,objective="Survey a new native-verified walkable tile")
+        self.assertEqual(q["task"],"Leave the bedroom and find the next story NPC")
+        # Checkpoint migration from previously overwritten tactical tasks.
+        meta["objective_state"]["task"]="Survey a new native-verified walkable tile"
+        self.assertEqual(quest_state(meta,None,None,objective="Approach observed warp")["task"],
+                         "Find the next verified story interaction or map exit.")
+
     def test_party_observed_discards_internal_stale_script_wait_objective(self):
         m={}
         quest_state(m,None,[{"hp":12,"max_hp":15}])

@@ -240,10 +240,29 @@ def vision_stall(meta, field, *, limit=8):
     return False
 
 
+TACTICAL_OBJECTIVES=(
+    "Allow locked field script",
+    "Escape repeated field cycle",
+    "Survey a new native-verified walkable tile",
+    "Approach observed warp",
+    "Walk onto observed trigger",
+    "Travel toward observed connection",
+    "Interact with observed map event",
+    "Re-enter previously attempted native trigger",
+    "Native-validated last-resort visual step",
+    "Resume native navigation after strategic visual consultation",
+    "Verify native field coordinates with ordinary movement",
+    "Allow native battle animation to complete",
+    "Wait for blank-screen animation",
+    "Advance recognized ordinary dialogue page",
+)
+
+
 def quest_state(meta,field,party,obs=None,objective=None):
     """Keep a persistent goal above individual actions; only native facts
     can mark acquisition/transition milestones. Model facts stay hypotheses."""
     q=meta.setdefault("objective_state",{"phase":"obtain_initial_party","milestones":[],"task":"","fact":""})
+    old_phase=q.get("phase")
     if isinstance(party,list) and party:
         # Previously attempted warps/NPCs can become available when the team
         # changes. Keep a bounded audit of attempts, then give the native
@@ -264,6 +283,12 @@ def quest_state(meta,field,party,obs=None,objective=None):
         healthy=[p for p in party if p["hp"]>0]
         if not healthy or max(p["hp"]/p["max_hp"] for p in healthy)<.25:q["phase"]="restore_party_health"
         elif q["phase"] in ("obtain_initial_party","restore_party_health"):q["phase"]="explore_and_advance_story"
+    if (old_phase=="obtain_initial_party"
+            and q.get("phase")=="explore_and_advance_story"):
+        # Verified Pokémon acquisition retires the starter goal immediately.
+        # Do not wait for a tactical action to overwrite it on a later turn.
+        q["task"]="Find the next verified story interaction or map exit."
+        q["task_source"]="campaign_priority_after_party"
     if field and meta.get("observed_field_transitions") and "map_transition_observed" not in q["milestones"]:
         q["milestones"].append("map_transition_observed")
     # Carry only witnessed native outcomes into durable quest milestones.
@@ -292,13 +317,17 @@ def quest_state(meta,field,party,obs=None,objective=None):
         q["task"]="Find the Poké Ball in the starting bedroom, approach it, face it and press A; verify a Pokémon is acquired."
         q["task_source"]="campaign_priority_pending_native_party_witness"
     elif isinstance(objective,str) and objective:
-        # A finished starter objective must not be replaced by an internal
-        # wait/loop-recovery instruction as the player's strategic task.
-        if (q.get("phase")=="explore_and_advance_story" and
-                (objective.startswith("Allow locked field script") or
-                 objective.startswith("Escape repeated field cycle"))):
-            q["task"]="Find the next verified story interaction or map exit."
-            q["task_source"]="campaign_priority_after_party"
+        # Route steps, menu actions, idle waits, field calibration and scout
+        # instructions are transient skills, NEVER durable story goals.
+        # An older checkpoint may already contain one: repair it in place.
+        current=q.get("task","")
+        if (q.get("phase")=="explore_and_advance_story"
+                and objective.startswith(TACTICAL_OBJECTIVES)):
+            if (not isinstance(current,str) or not current
+                    or current.startswith(TACTICAL_OBJECTIVES)
+                    or "Poké Ball in the starting bedroom" in current):
+                q["task"]="Find the next verified story interaction or map exit."
+                q["task_source"]="campaign_priority_after_party"
         else:
             q["task"]=objective[:240]
             q["task_source"]="planner_proposal"
