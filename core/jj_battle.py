@@ -12,6 +12,7 @@ from core.rom_catalog import TYPES
 from core.live import LiveError
 from core.gameplay import cursor_action
 from core.upstream_battle import classic_multiplier, safe_damage_kind, catch_setup_slot
+from core.party_knowledge import capture_preference
 
 BATTLE_CB=0x08011101
 ACTION_CURSOR=0x02023FF8
@@ -173,9 +174,11 @@ class BattleAdapter:
         rows=self.catalog.move_ids
         healing=sum(x["count"] for x in bag["items"] if x["id"] in (13,19,20,21,22)) if bag else 0
         balls=sum(x["count"] for x in bag["balls"] if x["id"] in (2,3,4)) if bag else 0
-        # Capture useful new species while building a starting team. Never
-        # throw at trainers, use a Master Ball, or deliberately farm captures.
-        capture=state["wild"] and balls>0 and len(state["party"])<3 and not any(p["species_id"]==enemy["species"] for p in state["party"])
+        # Build a diversified six-slot team, preserving a reserve of balls
+        # beyond the initial three. Roster data must be checksum-consistent;
+        # do not catch duplicates, in trainer battles, or on guessed types.
+        catch_plan=capture_preference(state["party"],enemy,self.catalog,bag,wild=state["wild"])
+        capture=catch_plan["eligible"] and balls>0
         safe=move_rank(own,enemy,rows,state["disabled"],capture)
         if capture and health_percent(enemy)>35 and not enemy["status"]:
             setup=catch_setup_slot(own,enemy,rows,state["disabled"])
