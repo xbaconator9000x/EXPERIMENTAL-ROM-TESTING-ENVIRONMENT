@@ -21,7 +21,10 @@ VMAP=0x03005040
 MAIN=0x030030F0
 OBJECTS=0x02036E38
 SCRIPT=0x03000EB0
-FADE=0x03000F9C
+SCRIPT_CONTEXT2=0x03000F9C
+# Historical import compatibility only. This is not a proven palette-fade
+# address; the script-context guard must not be described as screen fading.
+FADE=SCRIPT_CONTEXT2
 PARTY=0x02024284
 BATTLE=0x02023BE4
 CTRL=0x03004FE0
@@ -41,11 +44,11 @@ def ordinary_dialogue(rgb):
         return [tuple(rgb[(y*240+x)*3:(y*240+x)*3+3]) for x in range(240)]
     # Actual v1.03.3 full-width dialogue border is orange RGB (206,82,0).
     # Older detector incorrectly required blue >=25, rejecting every pixel.
-    def red(p):return p[0]>=175 and 30<=p[1]<=155 and p[2]<=135 and p[0]>p[1]+65
+    def red(p):return p[0]>=145 and 20<=p[1]<=165 and p[2]<=145 and p[0]>p[1]+50
     def white(p):return min(p)>=232
     def gray(p):return 45<=p[0]<=125 and abs(p[0]-p[1])<=24 and abs(p[1]-p[2])<=24
     def navy(p):return p[0]<=100 and p[1]<=110 and 20<=p[2]<=170 and p[2]>=max(p[0],p[1])+8
-    def ink(p):return p[0]<110 and p[1]<110 and p[2]<160
+    def ink(p):return p[0]<110 and p[1]<110 and p[2]<225
     def run(row,pred):
         best=(0,0);start=None
         for x,p in enumerate(row+[None]):
@@ -78,7 +81,11 @@ def ordinary_dialogue(rgb):
     # Original script dialogue uses a white body; Jessie & James v1.03.3 also
     # uses a dark-blue interior with white glyphs. Require a full-width lower
     # backing edge to reject transitional animation and partial windows.
-    if not any(sum(gray(p) or navy(p) for p in colors(i))>=175 for i in range(152,160)):return None
+    # The real v1.03.3 "Oh no! I forgot my Pokémon" reminder has a
+    # near-black lower border. Earlier checks only admitted gray/navy
+    # borders, misclassifying this actual scripted message as field.
+    if not any(sum(gray(p) or navy(p) or ink(p) for p in colors(i))>=175
+               for i in range(152,160)):return None
     # Refuse an empty/opening dialogue box: A might become an interaction or a
     # menu confirmation after a text animation has cleared.
     glyphs=sum(sum(white(p) if navy_box else ink(p) for p in colors(i)[15:225])
@@ -146,13 +153,13 @@ class Adapter:
             cb=l.integer(MAIN+4,4)
             if not cb&1 or not span(cb&~1,2,0x08000000,0x08000000+self.size):self.reason="CALLBACK_INVALID";return None
             script_active=l.integer(SCRIPT,1)!=0
-            fade_active=l.integer(FADE,1)!=0
-            # Expose only boolean lock classification to private telemetry.
-            # Never lift a script/fade lock based on guessed offsets or stale
-            # model labels: the read-only probe distinguishes the blocker.
-            self.lock_probe={"script_active":script_active,"fade_active":fade_active}
-            if script_active or fade_active:self.reason="SCRIPT_OR_FADE_LOCK";return None
-            p=Profile(self.sha,SAVE_PTR,MAP_HEADER,VMAP,MAIN+4,cb,((SCRIPT,1,255,0),(FADE,1,255,0)))
+            context2_active=l.integer(SCRIPT_CONTEXT2,1)!=0
+            # Both probes are script/field-control state, not palette-fade
+            # evidence. A real story reminder is allowed to lock movement;
+            # the dialogue handler must advance that message instead.
+            self.lock_probe={"script_active":script_active,"script_context2_active":context2_active}
+            if script_active or context2_active:self.reason="SCRIPT_CONTROL_LOCK";return None
+            p=Profile(self.sha,SAVE_PTR,MAP_HEADER,VMAP,MAIN+4,cb,((SCRIPT,1,255,0),(SCRIPT_CONTEXT2,1,255,0)))
             field=Reader(l,p).snapshot()
             objects=l.read(OBJECTS,36*16)
             players=[];occupied=set()
