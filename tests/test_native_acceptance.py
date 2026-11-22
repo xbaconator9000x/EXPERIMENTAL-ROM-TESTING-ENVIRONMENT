@@ -30,3 +30,9 @@ class AcceptanceTest(unittest.TestCase):
         self.assertEqual(a.ledger["counts"]["native_step"],1)
         a.reload(1,b"a",b"b");self.assertEqual(a.ledger["counts"]["checkpoint_reload"],0)
         a.reload(1,b"a",b"a");self.assertEqual(a.ledger["counts"]["checkpoint_reload"],1)
+        a.reload(1,b"a",b"a")
+        self.assertEqual(a.ledger["counts"]["checkpoint_reload"],2)
+        self.assertEqual([e["detail"]["ordinal"] for e in a.ledger["events"]
+                          if e["kind"]=="checkpoint_reload"],[1,2])
+        a.reload(1,b"a",b"b")
+        self.assertEqual(a.ledger["counts"]["checkpoint_reload"],2)
