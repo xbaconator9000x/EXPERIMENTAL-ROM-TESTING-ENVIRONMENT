@@ -4,6 +4,7 @@ import json
 from core.jj_fast import DIR, ordinary_dialogue
 from core.live import LiveError
 from core.jj_world_model import summary as world_summary
+from core.jj_tile_memory import diagnostics as tile_diagnostics
 
 VERSION=1
 def action_id(actions):
@@ -175,7 +176,7 @@ def diagnostic(adapter,battles,menus,field,meta):
             "battle_callbacks":len(battles.callbacks),"battle_witnesses":len(meta.get("battle_proof",[])),
             "catalog":battles.catalog is not None,"inventory":battles.field_inventory,
             "bag_candidate":menus.bag_ok,"party_candidate":menus.party_ok,
-            "world":world_summary(meta)}
+            "world":world_summary(meta),"tile_learning":tile_diagnostics(meta)}
 
 
 def bootstrap(meta,candidate,screen):
