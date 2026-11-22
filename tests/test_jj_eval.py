@@ -191,10 +191,26 @@ class ScratchSafetyTests(unittest.TestCase):
                         ident["goal"],model,budget=4,player=fake_player)
             self.assertEqual(a["result"],"PASS")
             self.assertTrue(a["original_unchanged"])
+            self.assertEqual(a["episode_identity"]["original_checkpoint_sha256"],hashlib.sha256(original).hexdigest())
+            self.assertEqual(a["episode_identity"]["model"],"mock")
+            self.assertEqual(len(a["episode_identity"]["isolated_checkpoint_sha256"]),64)
             self.assertEqual(cp.read_bytes(),original)
             self.assertEqual(len(set(locations)),2)
             self.assertTrue((locations[0]/"evaluation.json").exists())
             self.assertFalse((cp.parent/"evaluation.json").exists())
+
+    def test_fabricated_success_not_saved_to_isolated_checkpoint_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            cp,out,runner,rom,sha,model,ident=self.setup(Path(d))
+            def uncommitted_player(runner,rom,sha,goal,folder,model,**opts):
+                stored,state,rgb=load_progress(Path(folder)/"progress.bin",ident)
+                invented=result(stored,[event("battle_win")],ident=ident)
+                return "STOPPED",invented,rgb
+            report=run_isolated("win_battle",cp,out,runner,rom,sha,
+                           ident["goal"],model,budget=4,player=uncommitted_player)
+            self.assertEqual(report["result"],"FAIL")
+            self.assertEqual(report["metrics"]["battle_wins"],0)
+            self.assertEqual(report["reason"],"returned_state_does_not_match_isolated_checkpoint")
 
     def test_wrong_checkpoint_identity_cannot_run_or_create_scratch(self):
         with tempfile.TemporaryDirectory() as d:
@@ -233,7 +249,7 @@ class ScratchSafetyTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()) as output:
                 exit_code=main(["score","--scenario","win_battle","--before",str(cp),
                     "--after",str(later),"--runner",str(runner),"--rom-sha",sha,
-                    "--goal",ident["goal"],"--model",ident["model"]])
+                    ])
             self.assertEqual(exit_code,0)
             self.assertEqual(json.loads(output.getvalue())["result"],"PASS")
 
