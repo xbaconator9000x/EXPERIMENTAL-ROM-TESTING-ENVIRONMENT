@@ -75,6 +75,20 @@ class TestExplorer(unittest.TestCase):
         self.assertIsNone(ex.next(candidate,meta,info))
         self.assertNotIn("event_goal",meta)
 
+    def test_coordinate_event_shared_with_warp_is_a_valid_native_target(self):
+        from core.firered import Field
+        f=Field((43,1),(4,3),8,8,(0,)*64)
+        warp={"kind":"warp","x":4,"y":2,"id":0,"destination":[43,2]}
+        coord={"kind":"coord","x":4,"y":2,"id":0}
+        c=(f,0x08001235,set())
+        ex=Explorer(MockAdapter())
+        choices=options(f,set(),[coord],[],avoid_warps=[coord,warp])
+        self.assertTrue(choices)
+        self.assertEqual(choices[0][-1],["Up"])
+        meta={"native_party_count":3}
+        self.assertTrue(ex.reconsider(c,meta,([warp,coord],None)))
+        self.assertEqual(ex.next(c,meta,([warp,coord],None))[0]["actions"][0]["button"],"UP")
+
     def test_guarded_visual_is_single_step_and_native_collision_checked(self):
         from core.firered import Field
         ex=Explorer(MockAdapter())

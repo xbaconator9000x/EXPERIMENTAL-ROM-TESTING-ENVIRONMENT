@@ -476,12 +476,19 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 # Exhaust meaningful ROM-derived exit/coordinate/NPC choices
                 # in multiple substantial sweeps before a Qwen referral.
                 if (decision is None and field_verified and events
-                        and hasattr(explorer,"reconsider")
-                        and explorer.reconsider(field_before,meta,events)):
-                    again=explorer.next(field_before,meta,events)
-                    if again:
-                        decision,event_command=again
-                        source="native_explore"
+                        and hasattr(explorer,"reconsider")):
+                    # Some synthetic/event-overlap routes are not actionable
+                    # even though an event exists. Try another native target
+                    # in the same tick, not Qwen after one null path.
+                    for _ in range(24):
+                        if not explorer.reconsider(field_before,meta,events):
+                            break
+                        again=explorer.next(field_before,meta,events)
+                        if again:
+                            decision,event_command=again
+                            source="native_explore"
+                            break
+                        meta.pop("event_goal",None)
             if (decision is None and sha in JJ_RELEASES and
                     adapter.reason=="SCRIPT_CONTROL_LOCK" and
                     battle_before is None and menu_before is None):
