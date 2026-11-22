@@ -292,7 +292,8 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     acceptance=Acceptance(meta,sha,identity["runner"],vanilla,adapter,battles)
                 if should_stop():return "STOPPED",meta,rgb
             turn_started=time.perf_counter();model_elapsed=None
-            adapter.attach(live,meta)
+            adapter.attach(live)
+            if isinstance(adapter,Adapter):adapter.meta=meta
             field_before=adapter.candidate(rgb)
             if getattr(adapter,"reason",None)!="SCRIPT_CONTROL_LOCK":meta.pop("script_settle",None)
             battle_before=battles.snapshot(live)
@@ -609,7 +610,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             if session_frames+cost>180000:
                 state=live.save_state();live.close();live=open_live(state);session_frames=0
                 acceptance.reload(meta["decisions"],rgb,live.rgb())
-                adapter.attach(live,meta)
+                adapter.attach(live)
             try:
                 for action in actions:
                     live.step(BUTTONS[action["button"]],action["frames"])
@@ -629,7 +630,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 if reproduced is not None:
                     state,after=reproduced
                     live=open_live(state);session_frames=0
-                    adapter.attach(live,meta)
+                    adapter.attach(live)
                     meta.pop("failed_action",None)
                 else:
                     quarantine(meta,screen,actions)
@@ -643,7 +644,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     # ordinary field input at this checkpoint, never a reset.
                     if status=="REPLAY_FAILED" and sum(x["screen"]==screen for x in meta["failed_inputs"])<2 and alternative(meta,screen,field_before,history):
                         live=open_live(state);session_frames=0
-                        adapter.attach(live,meta)
+                        adapter.attach(live)
                         meta.pop("event_goal",None);meta.pop("native_route",None)
                         meta.pop("failed_action",None)
                         continue
@@ -653,7 +654,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                         # never assume that the crashing action succeeded.
                         try:
                             live=open_live(state);session_frames=0
-                            adapter.attach(live,meta)
+                            adapter.attach(live)
                         except (LiveError,OSError):
                             return "EMULATOR_ERROR",meta,rgb
                         control.review=True

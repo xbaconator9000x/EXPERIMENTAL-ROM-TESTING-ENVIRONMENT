@@ -119,7 +119,7 @@ class FastTests(unittest.TestCase):
                   {"decision":978,"source":"native_explore","field_after":{"map":[43,1],"pos":[4,5]}},
                   {"decision":980,"source":"native_explore","field_after":{"map":[43,1],"pos":[4,3]}}]}
         def candidate(m,live):
-            a=Adapter("unused","wrong");a.admitted=True;a.size=0x10000;a.attach(live,m)
+            a=Adapter("unused","wrong");a.admitted=True;a.size=0x10000;a.attach(live);a.meta=m
             with patch("core.jj_fast.Reader") as reader:
                 reader.return_value.snapshot.return_value=field
                 answer=a.candidate(bytes(115200))
