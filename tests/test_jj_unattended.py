@@ -12,10 +12,13 @@ class Tests(unittest.TestCase):
         field=(f,0x08001235,set())
         meta={"objective_state":{"phase":"obtain_initial_party"},"history":[]}
         for i in range(7):
-            meta["history"].append({"source":"vision_compact","field_after":{"map":[43,1],"pos":[6,i]}})
+            meta["history"].append({"source":"vision_compact","actions":[{"button":"UP","frames":16}],"field_after":{"map":[43,1],"pos":[6,i]}})
         self.assertFalse(vision_stall(meta,field))
-        meta["history"].append({"source":"vision_rich","field_after":{"map":[43,1],"pos":[6,8]}})
+        meta["history"].append({"source":"vision_rich","actions":[{"button":"DOWN","frames":16}],"field_after":{"map":[43,1],"pos":[6,8]}})
         self.assertTrue(vision_stall(meta,field))
+        meta["history"].append({"source":"vision_rich","observed_stage":"dialogue","actions":[{"button":"A","frames":5}],"field_after":{"map":[43,1],"pos":[6,8]}})
+        self.assertFalse(vision_stall(meta,field))
+        meta["history"].pop()
         meta["history"].append({"source":"native_explore","field_after":{"map":[43,1],"pos":[7,8]}})
         self.assertFalse(vision_stall(meta,field))
         meta["history"].pop()
