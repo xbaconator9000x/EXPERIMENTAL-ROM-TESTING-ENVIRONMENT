@@ -68,9 +68,8 @@ class FastTests(unittest.TestCase):
         self.assertIsNone(ordinary_dialogue(bytes(raw)))
 
     def test_real_style_starter_warning_box_with_dark_lower_border(self):
-        # The private v1.03.3 playthrough showed a full-width ordinary
-        # message ("Oh no! I forgot my Pokémon") while script controls
-        # were locked. The previous lower-border detector demanded gray/
+        # A real v1.03.3 playthrough showed a full-width field message
+        # while script controls were locked. The previous lower-border detector demanded gray/
         # navy and silently returned to vision-driven directional movement.
         rgb=bytearray(frame())
         for y in range(113,119):
