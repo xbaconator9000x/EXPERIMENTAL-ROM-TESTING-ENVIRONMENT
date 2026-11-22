@@ -87,15 +87,25 @@ def ordinary_dialogue(rgb):
     def lower_edge(i):
         row=colors(i)
         outside=row[0]
-        # Dark pixels count only if they form an actual window edge,
-        # not the identical dark overworld/background behind a vanished box.
-        return sum(gray(p) or navy(p) or
-                   (ink(p) and sum(abs(a-b) for a,b in zip(p,outside))>=18)
-                   for p in row[x0+3:x1-3])
-    if not any(lower_edge(i)>=175 for i in range(152,160)):return None
-    # Refuse an empty/opening dialogue box: A might become an interaction or a
-    # menu confirmation after a text animation has cleared.
-    glyphs=sum(sum(white(p) if navy_box else ink(p) for p in colors(i)[15:225])
+        # Actual scripted conversations can have a near-black lower frame on
+        # a black room backdrop. Comparing only against the outside pixel
+        # rejects the real border. Corroborate it against the *white interior*
+        # of the same already-recognized dialogue window instead. Still
+        # require the orange top edge, two interior fill rows, and glyphs.
+        inside=colors(125)
+        return sum(gray(row[x]) or navy(row[x]) or red(row[x]) or
+                   (ink(row[x]) and (
+                       sum(abs(a-b) for a,b in zip(row[x],outside))>=18 or
+                       (white_box and min(inside[x])>=232 and max(row[x])<70)))
+                   for x in range(x0+3,x1-3))
+    if not any(lower_edge(i)>=120 for i in range(152,160)):return None
+    # Text in Jessie & James may be red rather than dark gray. Treat red
+    # glyphs only INSIDE an already validated white full-width window;
+    # this never makes a bare orange line qualify as dialogue.
+    def red_glyph(p):
+        return p[0]>=115 and p[0]>p[1]+60 and p[0]>p[2]+55 and p[1]<175 and p[2]<145
+    glyphs=sum(sum(white(p) if navy_box else (ink(p) or red_glyph(p))
+                   for p in colors(i)[15:225])
                for i in range(123,149,2))
     if glyphs<12:return None
     # Additional colored/white panel above the dialogue (Yes/No, choice menu,
