@@ -103,7 +103,11 @@ def _events(meta,identity,start_decision,baseline=None):
     events=ledger.get("events")
     if not isinstance(events,list):return None,"native_events_missing"
     accepted=[];seen=set()
-    old_rows=baseline.get("events",[]) if isinstance(baseline,dict) else []
+    # A code-version upgrade resets the acceptance ledger; previous
+    # ordinals from a *different* engine must not invalidate fresh proof.
+    same_ledger=(isinstance(baseline,dict) and
+                 baseline.get("identity")==ledger.get("identity"))
+    old_rows=baseline.get("events",[]) if same_ledger else []
     if not isinstance(old_rows,list):old_rows=[]
     old_reloads=[e.get("detail",{}).get("ordinal",0)
                  for e in old_rows if isinstance(e,dict) and e.get("kind")=="checkpoint_reload"
