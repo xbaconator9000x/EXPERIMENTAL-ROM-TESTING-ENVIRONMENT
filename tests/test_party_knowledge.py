@@ -87,6 +87,8 @@ class PartyKnowledgeTests(unittest.TestCase):
         self.assertTrue(observe_party(meta,[mon()],Catalog,decision=4,bag=None))
         self.assertNotIn("bag",meta["party_knowledge"]["current"])
         self.assertEqual(meta["party_knowledge"]["current"]["last_known_bag"],bag)
+        self.assertTrue(observe_party(meta,[mon()],Catalog,decision=4,bag=None))
+        self.assertEqual(meta["party_knowledge"]["current"]["last_known_bag"],bag)
         self.assertTrue(observe_party(meta,[mon()],Catalog,decision=5,
                                       bag={"balls":[{"id":4,"count":5}],"items":[]}))
         self.assertEqual(meta["party_knowledge"]["current"]["bag"]["balls"][0]["count"],5)
