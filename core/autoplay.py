@@ -27,6 +27,7 @@ from core.jj_battle import BattleAdapter
 from core.gen3_profiles import open_profile, VanillaField, VanillaBattle
 from core.native_acceptance import Acceptance
 from core.jj_explore import Explorer
+from core.jj_world_model import observe as world_observe, task as world_task, summary as world_summary
 from core.jj_menus import MenuDriver,intent_from_battle
 from core.jj_runtime import NATIVE, animation_wait, record_field, count_decision, recovery_allowed
 from core.jj_connections import observe_arrival
@@ -294,8 +295,14 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
             field_before=adapter.candidate(rgb)
             battle_before=battles.snapshot(live)
             events=explorer.inspect(field_before,meta)
+            # Only actual native movement proof can update the world graph.
+            field_verified=adapter.verified_field(field_before,meta)
+            if sha in JJ_RELEASES and field_verified:
+                world_observe(meta,field_before,events[0] if events else None,
+                              verified=True,decision=meta["decisions"])
             if battle_before or field_before:meta.pop('menu_intent',None)
             menu_before=menus.snapshot(live,meta)
+            verified_party=None
             # A decoded party is an authoritative snapshot only after the
             # native reader verifies all slot checksums AND the separately
             # read party count. Field-script locks do not prevent this
@@ -308,6 +315,9 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                 if verified_party is not None:
                     observe_party(meta,verified_party,catalog,decision=meta["decisions"],
                                   bag=battles.bag(live))
+            if verified_party is not None and sha in JJ_RELEASES:
+                quest_state(meta,field_before,verified_party)
+                meta["native_party_count"]=len(verified_party)
             if battle_before and battle_before.get("callback") in meta.get("battle_proof",[]):
                 observe_battle(meta,battle_before,catalog,decision=meta["decisions"])
             meta["native_diagnostics"]=diagnostic(adapter,battles,menus,field_before,meta)
@@ -320,6 +330,7 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     party=model.structured.get("party")
                     if isinstance(party,list):meta["native_party_count"]=len(party)
                     if sha in JJ_RELEASES:quest_state(meta,field_before,party)
+                    model.structured["world"]=world_summary(meta)
                     # Reachability is computed only when the strategic model is called.
                 native_battle=battles.summary(battle_before,meta)
                 if native_battle is not None:model.structured={"battle":native_battle}
@@ -383,7 +394,20 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                     event=explorer.next(field_before,meta,events)
                     if event:decision,event_command=event;source="native_explore"
                     else:meta.pop("event_goal",None)
-                if decision is None and recovery_allowed(field_before,meta,adapter.verified_field(field_before,meta)) and explorer.request(field_before,meta,events,"explore"):
+                if (decision is None and sha in JJ_RELEASES and field_verified
+                        and verified_party is not None and events):
+                    # Reuse the existing A* skill executor. Qwen supplies
+                    # goals for unfamiliar situations; on a verified map the
+                    # deterministic player can seek a starter NPC or new exit.
+                    intent=world_task(meta,verified_party,events[0])
+                    if intent and explorer.request(field_before,meta,events,intent):
+                        event=explorer.next(field_before,meta,events)
+                        if event:
+                            decision,event_command=event
+                            source="native_explore";meta.pop("native_route",None)
+                if (decision is None and recovery_allowed(field_before,meta,field_verified)
+                        and world_task(meta,verified_party,events[0] if events else None)
+                        and explorer.request(field_before,meta,events,"explore")):
                     event=explorer.next(field_before,meta,events)
                     if event:decision,event_command=event;source="native_explore";meta.pop("native_route",None)
                 if decision is None:
@@ -598,7 +622,11 @@ def play(runner,rom,sha,goal,folder,model,*,should_stop=lambda:False,report=lamb
                          and field_before[0].pos!=field_after[0].pos
                          and (not proved or adapter.verified_field(field_after,meta))))
                 observe_action_batch(meta,rgb,after,field_ok=field_ok,dialogue=(ordinary_dialogue(after) is not None))
-            record_field(meta,field_after,adapter.verified_field(field_after,meta))
+            after_verified=adapter.verified_field(field_after,meta)
+            record_field(meta,field_after,after_verified)
+            if sha in JJ_RELEASES and after_verified:
+                world_observe(meta,field_after,None,verified=True,
+                              decision=meta["decisions"]+1)
             if source=="native_explore":explorer.finish(meta,field_before,field_after,event_command)
             observe_arrival(meta,field_after,adapter.verified_field(field_after,meta))
             if source=="native_route":
