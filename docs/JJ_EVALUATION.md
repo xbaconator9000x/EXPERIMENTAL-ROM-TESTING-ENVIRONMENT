@@ -59,8 +59,9 @@ directory overlapping the live checkpoint, or invalid state is rejected.
 Each run creates a *fresh* `jj-eval-<scenario>-...` directory:
 - `progress.bin`: an independently written checkpoint COPY for that episode
 - `actions.jsonl`: private native/controller action trace
-- `evaluation.json`: pass/fail, reason, evidence counts, stuck ratio,
-  novel maps, capped progress score, frames, native actions and Qwen calls
+- `evaluation.json`: pass/fail, reason, evidence counts, verified
+  stuck ratio and measured stuck seconds, novel maps, capped progress score,
+  frames, native actions, Qwen calls and native actions per model call
 - any private screenshots or dialogue evidence created by the original player
 
 All outputs remain **local**. They are never placed in the public repository
