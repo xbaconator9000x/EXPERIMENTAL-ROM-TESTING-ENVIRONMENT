@@ -77,8 +77,13 @@ class WorldModelTests(unittest.TestCase):
                                current_map=(1,2),task_name="invalid"))
         self.assertIsNone(explorer_action_without_field(c,m))
         self.assertFalse(complete(m,task_name="exit",observed=False))
+        self.assertFalse(complete(m,task_name="exit",observed=True))
+        self.assertFalse(complete(m,task_name="interact",observed=True))
+        m["observed_field_transitions"]=[{"from":[1,2],"to":[3,4],"arrival":[0,0]}]
         self.assertTrue(complete(m,task_name="exit",observed=True))
-        self.assertEqual(m["world_model"]["skill_outcomes"],[{"task":"exit","result":"native_verified"}])
+        self.assertFalse(complete(m,task_name="exit",observed=True))
+        self.assertEqual(m["world_model"]["skill_outcomes"],
+            [{"task":"exit","result":"native_verified","from":"1:2","to":"3:4"}])
 
     def test_bounded_maps_positions_events(self):
         meta={}
