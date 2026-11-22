@@ -116,6 +116,7 @@ def observe_party(meta,party,catalog=None,*,decision,bag=None):
     if not isinstance(prior,dict) or prior.get("version")!=1:
         prior={"version":1,"events":[],"current":{}}
     previous=prior.get("current",{})
+    if not isinstance(previous,dict):previous={}
     events=list(prior.get("events",[]))[-MAX_EVENTS:]
     old_members={m["slot"]:m for m in previous.get("members",[])
                  if isinstance(m,dict) and "slot" in m}
@@ -129,10 +130,11 @@ def observe_party(meta,party,catalog=None,*,decision,bag=None):
     # A removed member is not automatically counted as fainted, lost or released.
     if len(current["members"])<len(old_members):
         events.append({"decision":decision,"kind":"roster_shrank"})
-    if inventory is None and "bag" in previous:
+    if inventory is None:
         # Last observed quantities may be stale: label them as such and
         # NEVER use them to authorize a new bag action.
-        current["last_known_bag"]=previous.get("bag")
+        last=previous.get("bag",previous.get("last_known_bag"))
+        if last is not None:current["last_known_bag"]=last
     prior["events"]=events[-MAX_EVENTS:]
     prior["current"]=current
     meta["party_knowledge"]=prior
