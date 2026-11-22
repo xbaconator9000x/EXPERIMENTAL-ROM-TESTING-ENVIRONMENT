@@ -5,6 +5,64 @@ from core.live import LiveError
 def history():
     return [{"before":"a" if i%2==0 else "b","after":"b" if i%2==0 else "a","scene":"hospital_room","actions":[{"button":"UP" if i%2==0 else "DOWN","frames":16}]} for i in range(12)]
 class Tests(unittest.TestCase):
+    def test_script_recovery_rearms_once_only_after_readable_unlocked_field(self):
+        from core.jj_unattended import rearm_after_script_recovery, field_strategic_referral
+        from core.firered import Field
+        field=(Field((43,1),(9,6),14,14,(0,)*196),0x08001235,set())
+        meta={"recovery_resume":{"kind":"native_script_locked","phase":"pending"},
+              "field_strategic_referral":{"epoch":[43,1,3],"calls":2},
+              "native_revisit":{"epoch":[43,1,3],"approaches":24,"sweeps":4},
+              "event_attempts":[{"event":"already_tried"}],
+              "native_scout":{"maps":{"43:1":{"visited":[[9,6]],"moves":11}}},
+              "objective_state":{"phase":"explore_and_advance_story",
+                                 "task":"Allow verified text printer to finish",
+                                 "milestones":["party_observed"]}}
+        self.assertFalse(rearm_after_script_recovery(meta,field,unlocked=False))
+        self.assertFalse(rearm_after_script_recovery(meta,field,unlocked=True,visible_dialogue=True))
+        self.assertEqual(meta["field_strategic_referral"]["calls"],2)
+        self.assertTrue(rearm_after_script_recovery(meta,field,unlocked=True))
+        self.assertNotIn("field_strategic_referral",meta)
+        self.assertNotIn("native_revisit",meta)
+        self.assertEqual(meta["event_attempts"],[])
+        self.assertEqual(meta["native_scout"]["maps"]["43:1"]["visited"],[[9,6]])
+        self.assertEqual(meta["recovery_resume"]["phase"],"calibrating")
+        self.assertEqual(meta["objective_state"]["task"],
+                         "Find the next verified story interaction or map exit.")
+        self.assertTrue(field_strategic_referral(meta,field))
+        self.assertFalse(rearm_after_script_recovery(meta,field,unlocked=True))
+        self.assertEqual(meta["field_strategic_referral"]["calls"],1)
+
+    def test_post_dialogue_native_field_recalibrates_without_stale_scene_label(self):
+        from core.jj_unattended import bootstrap
+        from core.firered import Field
+        f=Field((43,1),(9,6),14,14,(0,)*196)
+        candidate=(f,0x08001235,set())
+        meta={"history":[{"scene":"native_script_settle",
+                          "actions":[{"button":"WAIT","frames":24}]}],
+              "recovery_resume":{"kind":"native_script_locked",
+                                 "phase":"calibrating","map":[43,1]}}
+        self.assertIsNone(bootstrap(meta,candidate,"screen"))
+        choices=[bootstrap(meta,candidate,"screen",post_dialogue=True)
+                 for _ in range(4)]
+        self.assertTrue(all(x is not None for x in choices))
+        self.assertEqual(len({x["actions"][0]["button"] for x in choices}),4)
+        self.assertTrue(all(x["actions"][0]["frames"]==16 for x in choices))
+        self.assertIsNone(bootstrap(meta,candidate,"screen",post_dialogue=True))
+        meta["recovery_resume"]["map"]=[43,2]
+        self.assertIsNone(bootstrap({"history":meta["history"],
+            "recovery_resume":meta["recovery_resume"]},
+            candidate,"screen",post_dialogue=True))
+
+    def test_non_script_recovery_cannot_rearm_exhausted_navigation(self):
+        from core.jj_unattended import rearm_after_script_recovery
+        from core.firered import Field
+        f=(Field((43,1),(9,6),14,14,(0,)*196),0x08001235,set())
+        meta={"recovery_resume":{"kind":"native_navigation_exhausted",
+                                 "phase":"pending"},
+              "field_strategic_referral":{"calls":2}}
+        self.assertFalse(rearm_after_script_recovery(meta,f,unlocked=True))
+        self.assertEqual(meta["field_strategic_referral"]["calls"],2)
+
     def test_sparse_strategic_referrals_have_map_party_budget(self):
         from core.jj_unattended import field_strategic_referral
         from core.firered import Field
